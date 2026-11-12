@@ -22,10 +22,10 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           xcrun -sdk iphoneos swiftc -parse-as-library -O \
             -target arm64-apple-ios15.0 -sdk "$SDK" \
-            -framework UIKit -framework WebKit -framework AVFoundation -framework Compression \
+            -framework UIKit -framework WebKit -framework AVFoundation \
             lf2/App/main.swift -o "$APP/LF2" 2>&1 | tee swiftc.log
           if [ ! -f "$APP/LF2" ]; then
-            grep -E "error:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            grep -E "error:|Undefined|ld:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
             exit 1
           fi
           cp lf2/App/Info.plist "$APP/Info.plist"
