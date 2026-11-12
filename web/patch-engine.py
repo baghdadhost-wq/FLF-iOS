@@ -63,4 +63,20 @@ patch('LF/manager.js',
       "              if (event.origin !== server.address) {\n                return\n              }",
       "              if (event.origin !== server.address && !(server.lan && event.source === util.div('lobby_window').contentWindow)) { // FLF-iOS: LAN lobby\n                return\n              }",
       'FLF-iOS: LAN lobby')
+# championship mode hooks (web/tournament.js)
+patch('game/game.js',
+      "var manager = new Manager(package, buildinfo);",
+      "var manager = new Manager(package, buildinfo); window.__flfManager = manager; // FLF-iOS: expose manager",
+      'FLF-iOS: expose manager')
+patch('LF/match.js',
+      "    match.prototype.F4 = function () {\n      const $ = this\n      $.destroy()\n      $.manager.match_end()",
+      "    match.prototype.F4 = function () {\n      const $ = this\n      $.destroy()\n"
+      "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook\n"
+      "      $.manager.match_end()",
+      'FLF-iOS: tournament hook')
+patch('LF/match.js',
+      "        $.manager.summary.show()\n        $.manager.sound.play('1/m_end')",
+      "        $.manager.summary.show()\n        $.manager.sound.play('1/m_end')\n"
+      "        if (window.__flfTourney) window.__flfTourney.onResult($, teams) // FLF-iOS: tournament result",
+      'FLF-iOS: tournament result')
 print('engine patched')
