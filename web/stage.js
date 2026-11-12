@@ -155,6 +155,12 @@
   function beginPhase(m, n) {
     S.phase = n
     var ph = S.stage.phases[n]
+    // walking limit for the player's team + camera stops at the same line
+    if (m.background) {
+      m.background.xlimit = ph.bound
+      m.background.xlimit_team = 1
+      m.background.camlimit = ph.bound
+    }
     S.pending = []
     ph.spawns.forEach(function (sp) {
       if (sp.ratio != null && sp.ratio < 1 && !sp.boss && Math.random() > sp.ratio) return
@@ -200,18 +206,25 @@
 
     // players may not walk past the current phase's limit
     var hs = humans(m), aliveH = 0
-    hs.forEach(function (c) {
-      if (c.ps.x > bound) { c.ps.x = bound; if (c.ps.vx > 0) c.ps.vx = 0 }
-      if (c.health.hp > 0) aliveH++
-    })
+    hs.forEach(function (c) { if (c.health.hp > 0) aliveH++ })
+    // the camera follows only the player(s), never the enemies
+    var bg = m.background
+    if (bg && hs.length && (!S.camSet || S.camN !== hs.length)) {
+      var follow = {}; hs.forEach(function (c) { follow[c.uid] = c })
+      bg.char = follow; S.camSet = true; S.camN = hs.length
+    }
 
     // dead enemies: respawn if they have more "times"
     var alive = 0
     for (var u in S.enemies) {
       var e = S.enemies[u], ch = m.character[u]
-      if (!ch || ch.health.hp <= 0) {
+      if (!ch || ch.health.hp <= 0 || e.deadAt) {
         if (!e.deadAt) e.deadAt = S.t
-        if (S.t - e.deadAt > 60) {
+        if (ch && ch.health.hp > 0) ch.health.hp = -1   // dead stays dead (the engine regenerates hp >= 0)
+        var since = S.t - e.deadAt
+        if (ch && since > 30 && ch.sp) { if (since % 4 < 2) ch.sp.hide(); else ch.sp.show() }   // blink
+        if (since > 60) {
+          if (ch && !e.removed) { e.removed = true; if (ch.sp) ch.sp.hide(); m.destroy_object(ch) }
           delete S.enemies[u]
           if (e.left > 0 && (!e.sp.soldier || bossAlive())) S.pending.push({ sp: e.sp, left: e.left, at: S.t + 30 })
         }
@@ -307,7 +320,14 @@
   // test helper: defeat every enemy currently on screen
   window.__flfStage.killAll = function () {
     if (!S || !S.match) return
-    for (var u in S.enemies) { var c = S.match.character[u]; if (c) c.health.hp = 0 }
+    for (var u in S.enemies) { var c = S.match.character[u]; if (c) c.health.hp = -1 }
+  }
+  window.__flfStage.debug = function () {
+    if (!S || !S.match) return null
+    var m = S.match, h = humans(m)[0]
+    return { x: h && Math.round(h.ps.x), bound: S.stage.phases[Math.max(0, S.phase)].bound, cam: Math.round(m.background.camerax),
+      onField: Object.keys(m.character).length, phase: S.phase, t: S.t, pending: S.pending.length, enemies: Object.keys(S.enemies).length,
+      result: S.result, loading: S.loading, hp: Object.keys(m.character).map(function (k) { return m.character[k].team + ':' + Math.round(m.character[k].health.hp) }).join(',') }
   }
   window.flfStage = { open: openSetup }
 })()

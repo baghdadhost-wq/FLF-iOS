@@ -90,4 +90,18 @@ patch('LF/match.js',
       "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook\n"
       "      if (window.__flfStage && window.__flfStage.onExit($)) return // FLF-iOS: stage exit",
       'FLF-iOS: stage exit')
+# stage mode: movable walking limit for the player's team (mechanics) and camera limit (background)
+patch('LF/mechanics.js',
+      "    if (ps.z < this.bg.zboundary[0]) { // z bounding",
+      "    if (this.bg.xlimit != null && this.parent.team === this.bg.xlimit_team && ps.x > this.bg.xlimit) { // FLF-iOS: stage limit\n"
+      "      ps.x = this.bg.xlimit\n"
+      "      if (ps.vx > 0) ps.vx = 0\n"
+      "    }\n"
+      "    if (ps.z < this.bg.zboundary[0]) { // z bounding",
+      'FLF-iOS: stage limit')
+patch('LF/background.js',
+      "        if (xLimit > $.width - screenW) xLimit = $.width - screenW",
+      "        if (xLimit > $.width - screenW) xLimit = $.width - screenW\n"
+      "        if ($.camlimit != null && xLimit > $.camlimit - screenW) xLimit = Math.max(0, $.camlimit - screenW) // FLF-iOS: stage camera",
+      'FLF-iOS: stage camera')
 print('engine patched')
