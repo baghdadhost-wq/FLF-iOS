@@ -23,7 +23,11 @@ jobs:
           xcrun -sdk iphoneos swiftc -parse-as-library -O \
             -target arm64-apple-ios15.0 -sdk "$SDK" \
             -framework UIKit -framework WebKit -framework AVFoundation -framework Compression \
-            lf2/App/main.swift -o "$APP/LF2"
+            lf2/App/main.swift -o "$APP/LF2" 2>&1 | tee swiftc.log
+          if [ ! -f "$APP/LF2" ]; then
+            grep -E "error:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
           cp lf2/App/Info.plist "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" "$APP/Info.plist"
           cp lf2/App/AppIcon60x60@2x.png lf2/App/AppIcon60x60@3x.png "$APP/"
