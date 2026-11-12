@@ -43,6 +43,12 @@ define({
 		{id:32, name:'Mark', type:'character', file:'data/mark.js', pic:'sprite/mark_f.png'},
 		{id:31, name:'Hunter', type:'character', file:'data/hunter.js', pic:'sprite/hunter_f.png', pack:[{id:201},{id:208}]},
 
+		// original heroes (recoloured LF2 bodies, remixed moves)
+		{id:60, name:'Storm Warden', type:'character', file:'data/storm.js', pic:'sprite/storm_f.png', pack:[{id:230},{id:231}]},
+		{id:61, name:'Engineer', type:'character', file:'data/engineer.js', pic:'sprite/engineer_f.png', pack:[{id:232}]},
+		{id:62, name:'Night Fox', type:'character', file:'data/nightfox.js', pic:'sprite/nightfox_f.png', pack:[{id:233}]},
+		{id:63, name:'Stone Giant', type:'character', file:'data/stonegiant.js', pic:'sprite/stonegiant_f.png'},
+
 		{id:100, type:'lightweapon', file:'data/weapon0.js'}, //stick
 		{id:101, type:'lightweapon', file:'data/weapon2.js'}, //hoe
 		{id:150, type:'heavyweapon', file:'data/weapon1.js'}, //stone
@@ -81,7 +87,11 @@ define({
 		{id:225, type:'specialattack', file:'data/bat_chase.js'},
 		{id:226, type:'specialattack', file:'data/justin_ball.js'},
 		{id:228, type:'specialattack', file:'data/julian_ball.js'},
-		{id:229, type:'specialattack', file:'data/julian_ball2.js'}
+		{id:229, type:'specialattack', file:'data/julian_ball2.js'},
+		{id:230, type:'specialattack', file:'data/storm_ball.js'},
+		{id:231, type:'specialattack', file:'data/storm_column.js'},
+		{id:232, type:'specialattack', file:'data/engineer_ball.js'},
+		{id:233, type:'specialattack', file:'data/nightfox_star.js'}
 	],
 
 	AI:
