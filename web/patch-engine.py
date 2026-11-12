@@ -41,4 +41,26 @@ patch('LF/character.js',
       "                  }\n"
       "                  if ($.hold.obj.type === 'heavyweapon') {",
       'FLF-iOS: drinks')
+# LAN multiplayer: allow the app's own scheme, add a built-in "LAN" server, accept the local lobby page
+patch('LF/manager.js',
+      "if (window.location.href.indexOf('http') === 0) {",
+      "if (window.location.href.indexOf('http') === 0 || window.location.href.indexOf('flf:') === 0) { // FLF-iOS: LAN",
+      'FLF-iOS: LAN')
+patch('LF/manager.js',
+      "            for (const S in settings.server) {\n              var op = document.createElement('option')",
+      "            settings.server['LAN - Wi-Fi'] = window.location.protocol + '//' + window.location.host // FLF-iOS: LAN server\n"
+      "            for (const S in settings.server) {\n              var op = document.createElement('option')",
+      'FLF-iOS: LAN server')
+patch('LF/manager.js',
+      "            util.div('server_select').onchange()\n",
+      "            util.div('server_select').value = 'LAN - Wi-Fi' // FLF-iOS: LAN default\n            util.div('server_select').onchange()\n",
+      'FLF-iOS: LAN default')
+patch('LF/manager.js',
+      "const server = JSON.parse(this.responseText)",
+      "const server = JSON.parse(this.responseText); if (server.lan) { server.address = window.location.protocol + '//' + window.location.host } // FLF-iOS: LAN address",
+      'FLF-iOS: LAN address')
+patch('LF/manager.js',
+      "              if (event.origin !== server.address) {\n                return\n              }",
+      "              if (event.origin !== server.address && !(server.lan && event.source === util.div('lobby_window').contentWindow)) { // FLF-iOS: LAN lobby\n                return\n              }",
+      'FLF-iOS: LAN lobby')
 print('engine patched')

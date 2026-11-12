@@ -36,5 +36,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key><true/>
+	<key>NSLocalNetworkUsageDescription</key><string>للعب مع صديق على نفس شبكة الواي فاي</string>
+	<key>NSBonjourServices</key><array><string>_flf._tcp</string></array>
 </dict>
 </plist>

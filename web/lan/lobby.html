@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+  body { margin: 0; background: #0f1430; color: #fff; font-family: -apple-system, sans-serif; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 12px; padding: 10px; box-sizing: border-box; text-align: center }
+  h2 { margin: 0 0 4px; font-size: 20px }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center }
+  button { font-size: 16px; padding: 12px 18px; border-radius: 12px; border: 1px solid #7a8cff; background: #1b2560; color: #fff }
+  button.main { background: #3a4bd0 }
+  input { font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #7a8cff; background: #0b0f25; color: #fff; width: 200px; text-align: center; direction: ltr }
+  #st { font-size: 15px; color: #cfd6ff; min-height: 22px; line-height: 1.6 }
+  .ip { font-size: 24px; font-weight: 800; color: #ffd76a; direction: ltr; display: inline-block }
+  .hidden { display: none !important }
+  small { color: #93a0b8 }
+</style>
+</head>
+<body>
+  <h2>اللعب عبر الشبكة المحلية (نفس الواي فاي)</h2>
+  <div id="choose" class="row">
+    <button class="main" id="host">🏠 أنا المضيف</button>
+    <button id="join">🔗 الانضمام إلى صديق</button>
+  </div>
+  <div id="joinbox" class="hidden" style="display:flex;flex-direction:column;gap:8px;align-items:center">
+    <div id="found" class="row"></div>
+    <div class="row">
+      <input id="ip" inputmode="decimal" placeholder="192.168.1.5">
+      <button class="main" id="go">اتصال</button>
+    </div>
+    <small>اكتب العنوان الظاهر على جهاز المضيف</small>
+  </div>
+  <div id="st"></div>
+  <button id="back" class="hidden">رجوع</button>
+  <small>الجهازان على نفس شبكة الواي فاي (أو أحدهما يشغّل «نقطة الاتصال الشخصية» والآخر متصل بها).<br>
+  عند أول استخدام قد يطلب iOS إذن «الشبكة المحلية» — اضغط «سماح».</small>
+<script>
+  var $ = function (id) { return document.getElementById(id) }
+  var role = null
+  function cmd(o) { parent.postMessage({ lanCmd: o }, '*') }
+  function st(h) { $('st').innerHTML = h }
+  $('host').onclick = function () {
+    role = 'active'; $('choose').classList.add('hidden'); $('back').classList.remove('hidden')
+    st('جارِ تجهيز الاستضافة…'); cmd({ cmd: 'host' })
+  }
+  $('join').onclick = function () {
+    role = 'passive'; $('choose').classList.add('hidden'); $('joinbox').classList.remove('hidden'); $('back').classList.remove('hidden')
+    st('ابحث عن المضيف أو اكتب عنوانه'); cmd({ cmd: 'browse' })
+    try { $('ip').value = localStorage.getItem('lan_last_ip') || '' } catch (e) {}
+  }
+  $('go').onclick = function () {
+    var ip = $('ip').value.trim(); if (!ip) return
+    try { localStorage.setItem('lan_last_ip', ip) } catch (e) {}
+    st('جارِ الاتصال بـ <span class="ip">' + ip + '</span> …'); cmd({ cmd: 'join', host: ip })
+  }
+  $('back').onclick = function () { cmd({ cmd: 'stop' }); location.reload() }
+  window.addEventListener('message', function (e) {
+    var ev = e.data && e.data.lanEvent; if (!ev) return
+    if (ev.type === 'hosting') {
+      st('بانتظار صديقك… اطلب منه أن يضغط «الانضمام» ويكتب:<br>' +
+        (ev.ips && ev.ips.length ? ev.ips.map(function (i) { return '<span class="ip">' + i + '</span>' }).join('<br>') : 'لم أجد عنوان واي فاي — تأكد أنك متصل بشبكة'))
+    } else if (ev.type === 'found') {
+      var box = $('found'); box.innerHTML = ''
+      ;(ev.hosts || []).forEach(function (h) {
+        var b = document.createElement('button'); b.textContent = '🎮 ' + h.name
+        b.onclick = function () { st('جارِ الاتصال بـ ' + h.name + ' …'); cmd({ cmd: 'join', service: h.name }) }
+        box.appendChild(b)
+      })
+    } else if (ev.type === 'connected') {
+      st('✅ تم الاتصال! ارجع واختر الشخصيات ثم ابدأ اللعب.')
+      parent.postMessage({ event: 'start', role: role, id1: role === 'active' ? 'a' : 'b', id2: role === 'active' ? 'b' : 'a' }, '*')
+    } else if (ev.type === 'error') {
+      st('⚠️ ' + ev.msg)
+    } else if (ev.type === 'closed') {
+      st('انقطع الاتصال')
+    }
+  })
+</script>
+</body>
+</html>

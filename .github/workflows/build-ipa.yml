@@ -24,6 +24,7 @@ jobs:
           # optional extra characters (see extra/README) are copied on top
           if [ -d extra/LF2_19 ]; then cp -R extra/LF2_19/. www/F/LF2_19/; fi
           cp web/flf-touch.js www/flf-touch.js
+          cp -R web/lan www/lan
           # small engine fixes so the hidden characters added in extra/ run
           python3 web/patch-engine.py www/F/F.LF
           # Web Audio sound engine (iOS cannot play the original <audio> sound sprite)
@@ -38,8 +39,12 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           xcrun -sdk iphoneos swiftc -parse-as-library -O \
             -target arm64-apple-ios14.0 -sdk "$SDK" \
-            -framework UIKit -framework WebKit -framework AVFoundation \
-            App/main.swift -o "$APP/FLF"
+            -framework UIKit -framework WebKit -framework AVFoundation -framework Network \
+            App/main.swift -o "$APP/FLF" 2>&1 | tee swiftc.log
+          if [ ! -f "$APP/FLF" ]; then
+            grep -E "error:|Undefined|ld:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
           cp App/Info.plist "$APP/Info.plist"
           cp App/AppIcon60x60@2x.png App/AppIcon60x60@3x.png "$APP/"
           cp -R www "$APP/www"
