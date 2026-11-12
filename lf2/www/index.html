@@ -40,9 +40,29 @@ window.lf2Progress = (text, frac) => {
   if (frac != null) $("bar").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
 };
 window.lf2Error = (msg) => {
-  $("st").textContent = "تعذّر التحميل: " + msg;
+  if (msg.indexOf("unpack:") === 0 && !window.__jsUnpackTried) { window.__jsUnpackTried = true; jsUnpack(); return; }
+  $("st").textContent = "تعذّر التحميل: " + msg.replace("unpack:", "");
   $("retry").style.display = "block";
 };
+
+// fallback: unpack the downloaded .gz parts inside the web view and keep the disk in memory
+async function jsUnpack() {
+  try {
+    lf2Progress("جارِ فك الضغط (طريقة بديلة)…", 0.9);
+    const parts = ["windows95.img.part1.gz", "windows95.img.part2.gz", "windows95.img.part3.gz"];
+    const blobs = [];
+    for (const p of parts) {
+      const r = await fetch("disk/" + p + ".dl");
+      if (!r.ok) throw new Error(p + " " + r.status);
+      blobs.push(await r.blob());
+    }
+    const gz = new Blob(blobs);
+    const img = await new Response(gz.stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+    window.lf2Ready(img.size, new File([img], "windows95.img"));
+  } catch (e) {
+    window.lf2Error("فشل فك الضغط: " + e.message);
+  }
+}
 $("retry").onclick = () => { $("retry").style.display = "none"; prepare(); };
 
 function prepare() {
@@ -66,7 +86,7 @@ function fit() {
 setInterval(fit, 500);
 addEventListener("resize", fit);
 
-window.lf2Ready = (diskSize) => {
+window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
   lf2Progress("تشغيل Little Fighter 2…", 1);
   const emulator = window.emulator = new V86({
     wasm_path: "v86.wasm",
@@ -75,8 +95,8 @@ window.lf2Ready = (diskSize) => {
     screen_container: $("screen_container"),
     bios: { url: "seabios.bin" },
     vga_bios: { url: "vgabios.bin" },
-    hda: { url: "disk/windows95.img", async: true, size: diskSize },
-    initial_state: { url: "disk/win95-lf2-default.bin.zst" },
+    hda: diskBuffer ? { buffer: diskBuffer, async: true } : { url: "disk/windows95.img", async: true, size: diskSize },
+    initial_state: { url: stateUrl || "disk/win95-lf2-default.bin.zst" },
     autostart: true,
     disable_keyboard: true,              // input comes from the on-screen controls
     disable_mouse: true,

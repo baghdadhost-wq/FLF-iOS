@@ -52,6 +52,15 @@ final class Preparer: NSObject {
             unpack(collected)
             return
         }
+        var cached = GameFiles.dir.appendingPathComponent(names[index] + ".dl")
+        if names[index] == GameFiles.state && FileManager.default.fileExists(atPath: GameFiles.stateFile.path) {
+            cached = GameFiles.stateFile
+        }
+        if let sz = (try? FileManager.default.attributesOfItem(atPath: cached.path)[.size] as? NSNumber)?.doubleValue, sz > 100_000 {
+            doneBytes += sz
+            downloadAll(names, index: index + 1, collected: collected + [cached])
+            return
+        }
         download(name: names[index], mirror: 0) { [weak self] url, err in
             guard let self = self else { return }
             guard let url = url else { DispatchQueue.main.async { self.finished(err ?? "download failed") }; return }
@@ -97,20 +106,24 @@ final class Preparer: NSObject {
             let stateDl = files.last!
             let tmp = GameFiles.dir.appendingPathComponent("windows95.img.tmp")
             do {
+                // put the saved state in place first (also used by the in-page fallback)
+                if stateDl != GameFiles.stateFile && FileManager.default.fileExists(atPath: stateDl.path) {
+                    try? FileManager.default.removeItem(at: GameFiles.stateFile)
+                    try FileManager.default.moveItem(at: stateDl, to: GameFiles.stateFile)
+                }
                 try Preparer.gunzip(gz, to: tmp) { frac in
                     DispatchQueue.main.async { self.report("جارِ فك الضغط…", 0.86 + frac * 0.13) }
                 }
                 let fm = FileManager.default
                 try? fm.removeItem(at: GameFiles.disk)
                 try fm.moveItem(at: tmp, to: GameFiles.disk)
-                try? fm.removeItem(at: GameFiles.stateFile)
-                try fm.moveItem(at: stateDl, to: GameFiles.stateFile)
                 gz.forEach { try? fm.removeItem(at: $0) }
                 DispatchQueue.main.async {
-                    if GameFiles.ready() { self.finished(nil) } else { self.finished("الملف غير مكتمل") }
+                    if GameFiles.ready() { self.finished(nil) } else { self.finished("unpack:الملف غير مكتمل") }
                 }
             } catch {
-                DispatchQueue.main.async { self.finished(error.localizedDescription) }
+                try? FileManager.default.removeItem(at: tmp)
+                DispatchQueue.main.async { self.finished("unpack:" + error.localizedDescription) }
             }
         }
     }
@@ -147,7 +160,10 @@ final class Preparer: NSObject {
                 let base = raw.bindMemory(to: UInt8.self).baseAddress ?? UnsafePointer<UInt8>(bitPattern: 1)!
                 stream.pointee.src_ptr = base
                 stream.pointee.src_size = raw.count
-                repeat {
+                // keep calling while input remains OR the decoder still hands out output
+                // (it can hold decoded data back even after all input is consumed)
+                var idle = 0
+                while true {
                     stream.pointee.dst_ptr = dst
                     stream.pointee.dst_size = dstSize
                     let st = compression_stream_process(stream, finalize ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0)
@@ -155,7 +171,11 @@ final class Preparer: NSObject {
                     let n = dstSize - stream.pointee.dst_size
                     if n > 0 { outH.write(Data(bytes: dst, count: n)); written += Int64(n) }
                     if st == COMPRESSION_STATUS_END { ended = true; return }
-                } while stream.pointee.src_size > 0 || stream.pointee.dst_size == 0
+                    if n == 0 && stream.pointee.src_size == 0 {
+                        idle += 1
+                        if !finalize || idle >= 3 { break }
+                    } else { idle = 0 }
+                }
             }
         }
 
@@ -181,7 +201,7 @@ final class Preparer: NSObject {
                 progress(Double(written) / Double(GameFiles.diskSize))
             }
         }
-        if !ended { try pump(Data(), finalize: true) }
+        if !ended { try pump(Data([0]).prefix(0), finalize: true) }
         guard written == GameFiles.diskSize else { throw GzError(msg: "حجم غير صحيح \(written)") }
     }
 }
