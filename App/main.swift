@@ -253,7 +253,7 @@ final class GameViewController: UIViewController, WKUIDelegate, WKScriptMessageH
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         cfg.userContentController.add(self, name: "lan")
-        for name in ["flf-touch.js", "tournament.js"] {
+        for name in ["flf-touch.js", "tournament.js", "stage.js"] {
             if let js = try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8) {
                 cfg.userContentController.addUserScript(
                     WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))

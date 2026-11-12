@@ -98,6 +98,7 @@ define([], function () {
     })
   }
   soundmanager.prototype.play = function (path) {
+    if (!path || typeof path !== 'string') return
     if (this.buffer[path]) return // play each sound once only in one TU
     this.buffer[path] = true
     let I, id

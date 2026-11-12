@@ -182,6 +182,8 @@
   tapBtn(tog, function () { root.classList.toggle('hidden') })
 
   // full virtual keyboard: every key goes straight to the game as a real key press
+  var stageBtn = mk('fk', '🗺️ مراحل')
+  tapBtn(stageBtn, function () { if (window.flfStage) window.flfStage.open() })
   var trophyBtn = mk('fk', '🏆 بطولة')
   tapBtn(trophyBtn, function () { if (window.flfTournament) window.flfTournament.open() })
   var kbBtn = mk('fk', '⌨')
@@ -289,7 +291,7 @@
     // function keys top-left
     var fw = 46 * s, fh = 28 * s
     var fx = safeL
-    fkBtns.concat([trophyBtn, kbBtn, helpBtn, tog]).forEach(function (b, i) { var ww = (b === helpBtn || b === trophyBtn) ? 64 * s : fw; place(b, fx, 6 * s, ww, fh); fx += ww + 4 * s })
+    fkBtns.concat([stageBtn, trophyBtn, kbBtn, helpBtn, tog]).forEach(function (b, i) { var ww = (b === helpBtn || b === trophyBtn || b === stageBtn) ? 64 * s : fw; place(b, fx, 6 * s, ww, fh); fx += ww + 4 * s })
     root.style.fontSize = (14 * s) + 'px'
     Array.prototype.forEach.call(vkb.querySelectorAll('.k'), function (k) { k.style.fontSize = (13 * s) + 'px'; k.style.padding = (5 * s) + 'px 0' })
     Array.prototype.forEach.call(root.querySelectorAll('.A,.J,.D'), function (b) { b.style.fontSize = (17 * s) + 'px' })

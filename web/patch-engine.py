@@ -79,4 +79,15 @@ patch('LF/match.js',
       "        $.manager.summary.show()\n        $.manager.sound.play('1/m_end')\n"
       "        if (window.__flfTourney) window.__flfTourney.onResult($, teams) // FLF-iOS: tournament result",
       'FLF-iOS: tournament result')
+# stage mode hooks (web/stage.js)
+patch('LF/match.js',
+      "    match.prototype.check_gameover = function () {\n      const $ = this",
+      "    match.prototype.check_gameover = function () {\n      const $ = this\n"
+      "      if (window.__flfStage && window.__flfStage.tick($)) return // FLF-iOS: stage hook",
+      'FLF-iOS: stage hook')
+patch('LF/match.js',
+      "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook",
+      "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook\n"
+      "      if (window.__flfStage && window.__flfStage.onExit($)) return // FLF-iOS: stage exit",
+      'FLF-iOS: stage exit')
 print('engine patched')
