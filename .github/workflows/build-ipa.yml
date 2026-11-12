@@ -24,6 +24,8 @@ jobs:
           # optional extra characters (see extra/README) are copied on top
           if [ -d extra/LF2_19 ]; then cp -R extra/LF2_19/. www/F/LF2_19/; fi
           cp web/flf-touch.js www/flf-touch.js
+          # small engine fixes so the hidden characters added in extra/ run
+          python3 web/patch-engine.py www/F/F.LF
           # Web Audio sound engine (iOS cannot play the original <audio> sound sprite)
           cp web/soundpack.js www/F/F.LF/LF/soundpack.js
           rm -f www/F/LF2_19/sound/soundpack.wav www/F/LF2_19/sound/soundpack.ac3

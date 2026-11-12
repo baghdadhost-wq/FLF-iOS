@@ -69,9 +69,20 @@
     'Louis': { 'RUN+A': 'لكمة الرعد', 'RUN+J': 'لكمة الرعد 2', 'D>J': 'ركلة الرعد', 'D^J': 'رمية الإعصار', 'D>A': 'كف العنقاء' },
     'Firen': { 'D>A': 'كرة نار', 'D>J': 'شعلة الجري', 'DvJ': 'الجحيم', 'D^J': 'انفجار' },
     'Freeze': { 'D>A': 'كرة جليد', 'DvJ': 'سيف الجليد', 'D>J': 'رماح الجليد', 'D^J': 'الإعصار الجليدي' },
-    'Bandit': {}
+    'Bandit': {},
+    'Julian ★': { 'RUN+A': 'لكمة الروح', 'D^A': 'ضربة صاعدة', 'D>A': 'انفجار الجمجمة', 'DJA': 'صورة المرآة', 'D^J': 'الانفجار الكبير', 'D>J': 'قنبلة الروح' },
+    'Firzen ★': { 'D>J': 'مدفع Firzen', 'D^A': 'الكارثة', 'D^J': 'البركان القطبي' },
+    'LouisEX ★': { 'DvA': 'رقصة العنقاء', 'RUN+A': 'لكمة الرعد', 'RUN+J': 'لكمة الرعد 2', 'D>A': 'كف العنقاء' },
+    'Bat ★': { 'D>J': 'لكمة السرعة', 'D>A': 'ليزر العين', 'D^J': 'استدعاء الخفافيش' },
+    'Jan ★': { 'D^A': 'حكم الشيطان', 'D^J': 'بركة الملاك' },
+    'Justin ★': { 'DvA': 'لكمة الذئب', 'D>A': 'كرة طاقة' },
+    'Sorcerer ★': { 'D>J': 'كرة جليد', 'D>A': 'كرة نار', 'D^J': 'علاج الآخرين', 'DvJ': 'علاج نفسه' },
+    'Jack ★': { 'D>A': 'كرة طاقة', 'D^A': 'الركلة الخاطفة' },
+    'Mark ★': { 'D>A': 'لكمة التحطيم', 'D>J': 'هجوم الجسد' },
+    'Monk ★': { 'D>A': 'كف شاولين' }
   }
-  var CHAR_ORDER = ['عام', 'Davis', 'Dennis', 'Woody', 'Deep', 'John', 'Henry', 'Rudolf', 'Louis', 'Firen', 'Freeze']
+  var CHAR_ORDER = ['عام', 'Davis', 'Dennis', 'Woody', 'Deep', 'John', 'Henry', 'Rudolf', 'Louis', 'Firen', 'Freeze',
+    'Julian ★', 'Firzen ★', 'LouisEX ★', 'Bat ★', 'Jan ★', 'Justin ★', 'Sorcerer ★', 'Jack ★', 'Mark ★', 'Monk ★']
 
   var current = 'عام'
   try { current = localStorage.getItem('flf_touch_char') || 'عام' } catch (x) {}
@@ -221,6 +232,7 @@
     var m = CHARS[current]
     for (var k in m) h += '<tr><td>' + m[k] + '</td><td dir="ltr" style="text-align:left">' + SEQ_TXT[k] + '</td></tr>'
     h += '</table><div style="margin-top:8px;opacity:.85;line-height:1.6">' +
+      '<b>★ الشخصيات المخفية</b> موجودة في قائمة الاختيار بعد Davis (ما عدا «صورة المرآة» عند Julian لأن المحرك لا يدعمها).<br>' +
       '<b>حركات عامة/سرية لكل الشخصيات:</b><br>' +
       'ركض: → → (اضغط مرتين) • ضربة الركض: ركض ثم A • قفزة طويلة (Dash): ركض ثم J<br>' +
       'تدحرج: أثناء الركض اضغط D • ضربة جوية: J ثم A<br>' +
