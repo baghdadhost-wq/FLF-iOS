@@ -1,0 +1,56 @@
+name: Build F.LF IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get game (F.LF engine + LF2_19 data)
+        run: |
+          mkdir -p www/F
+          git clone --depth 1 https://github.com/Project-F/F.LF.git www/F/F.LF
+          git clone --depth 1 https://github.com/Project-F/LF2_19.git www/F/LF2_19
+          rm -rf www/F/*/.git www/F/F.LF/docs www/F/F.LF/tools www/F/F.LF/core/sample www/F/F.LF/core/docs
+          # optional extra characters (see extra/README) are copied on top
+          if [ -d extra/LF2_19 ]; then cp -R extra/LF2_19/. www/F/LF2_19/; fi
+          cp web/flf-touch.js www/flf-touch.js
+          du -sh www
+
+      - name: Compile app
+        run: |
+          APP=Payload/FLF.app
+          mkdir -p "$APP"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos swiftc -parse-as-library -O \
+            -target arm64-apple-ios14.0 -sdk "$SDK" \
+            -framework UIKit -framework WebKit \
+            App/main.swift -o "$APP/FLF"
+          cp App/Info.plist "$APP/Info.plist"
+          cp App/AppIcon60x60@2x.png App/AppIcon60x60@3x.png "$APP/"
+          cp -R www "$APP/www"
+          plutil -lint "$APP/Info.plist"
+          file "$APP/FLF"
+          zip -qry FLF.ipa Payload
+          ls -lh FLF.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FLF-ipa
+          path: FLF.ipa
+
+      - name: Publish release (direct download link)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" FLF.ipa --title "F.LF iOS $TAG" \
+            --notes "Unsigned IPA for LiveContainer. Download FLF.ipa below." --latest
