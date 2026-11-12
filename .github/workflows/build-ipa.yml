@@ -23,6 +23,9 @@ jobs:
           # optional extra characters (see extra/README) are copied on top
           if [ -d extra/LF2_19 ]; then cp -R extra/LF2_19/. www/F/LF2_19/; fi
           cp web/flf-touch.js www/flf-touch.js
+          # Web Audio sound engine (iOS cannot play the original <audio> sound sprite)
+          cp web/soundpack.js www/F/F.LF/LF/soundpack.js
+          rm -f www/F/LF2_19/sound/soundpack.wav www/F/LF2_19/sound/soundpack.ac3
           du -sh www
 
       - name: Compile app
@@ -32,7 +35,7 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           xcrun -sdk iphoneos swiftc -parse-as-library -O \
             -target arm64-apple-ios14.0 -sdk "$SDK" \
-            -framework UIKit -framework WebKit \
+            -framework UIKit -framework WebKit -framework AVFoundation \
             App/main.swift -o "$APP/FLF"
           cp App/Info.plist "$APP/Info.plist"
           cp App/AppIcon60x60@2x.png App/AppIcon60x60@3x.png "$APP/"

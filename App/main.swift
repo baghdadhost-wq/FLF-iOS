@@ -1,5 +1,6 @@
 import UIKit
 import WebKit
+import AVFoundation
 
 // Serves the bundled game folder over a custom scheme (flf://app/...) so the
 // game behaves like it is on a web server (RequireJS, audio seeking, storage).
@@ -105,6 +106,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // play game sound even when the ringer/silent switch is on silent
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
         let w = UIWindow(frame: UIScreen.main.bounds)
         w.rootViewController = GameViewController()
         w.backgroundColor = .black
