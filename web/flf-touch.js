@@ -181,7 +181,7 @@
     h += '</table><div style="margin-top:8px;opacity:.85;line-height:1.6">' +
       '<b>حركات عامة/سرية لكل الشخصيات:</b><br>' +
       'ركض: → → (اضغط مرتين) • ضربة الركض: ركض ثم A • قفزة طويلة (Dash): ركض ثم J<br>' +
-      'تدحرج: أثناء الركض اضغط D • ضربة جوية: J ثم A • ركلة سقوط سريعة: أثناء القفز ↓ لا تحتاج<br>' +
+      'تدحرج: أثناء الركض اضغط D • ضربة جوية: J ثم A<br>' +
       'إمساك الخصم: اقترب من خصم مترنح واضغط A • رمي: أمسكه ثم اتجاه + A • التقاط سلاح: A بجانبه • رمي السلاح: ركض + A<br>' +
       'الاتجاه "→" في الأزرار = آخر اتجاه حرّكت إليه شخصيتك.<br>' +
       '⏸ إيقاف (F1) • ↻ إعادة (F4) • ❤ استعادة الطاقة (F7) • MP∞ طاقة لا نهائية (F6) • أسلحة من السماء (F8). F5–F9 لا تعمل في Stage mode.</div>' +
@@ -191,7 +191,7 @@
       b.addEventListener('click', function () {
         if (b.dataset.close) { panel.style.display = 'none'; return }
         current = b.dataset.c; try { localStorage.setItem('flf_touch_char', current) } catch (x) {}
-        labelSpecials(); renderPanel()
+        labelSpecials(); layout(); renderPanel()
       })
     })
   }
@@ -226,7 +226,7 @@
     // specials: column grid above the action buttons (right side)
     var sw = 70 * s, sh = 34 * s, gap = 6 * s
     var top = 44 * s
-    spBtns.concat([runBtn]).forEach(function (b, i) {
+    spBtns.filter(function (b, i) { return !!spAssign[i] }).concat([runBtn]).forEach(function (b, i) {
       var col = i % 2, row = Math.floor(i / 2)
       place(b, W - safeR - (2 - col) * (sw + gap), top + row * (sh + gap), sw, sh)
     })
