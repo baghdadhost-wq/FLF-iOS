@@ -2,6 +2,7 @@ import UIKit
 import WebKit
 import AVFoundation
 import Compression
+import UniformTypeIdentifiers
 
 // MARK: - Game files kept on the phone (downloaded once)
 
@@ -41,8 +42,58 @@ final class Preparer: NSObject {
     private var observation: NSKeyValueObservation?
     private var doneBytes: Double = 0
 
+    var needSource: () -> Void = {}
+
     func run() {
         if GameFiles.ready() { finished(nil); return }
+        if haveLocalParts() { unpack(localParts()); return }
+        needSource()
+    }
+
+    func haveLocalParts() -> Bool {
+        let fm = FileManager.default
+        let partsOK = GameFiles.parts.allSatisfy { fm.fileExists(atPath: GameFiles.dir.appendingPathComponent($0 + ".dl").path) }
+        let stateOK = fm.fileExists(atPath: GameFiles.stateFile.path) ||
+            fm.fileExists(atPath: GameFiles.dir.appendingPathComponent(GameFiles.state + ".dl").path)
+        return partsOK && stateOK
+    }
+    func localParts() -> [URL] {
+        let st = FileManager.default.fileExists(atPath: GameFiles.stateFile.path) ? GameFiles.stateFile
+            : GameFiles.dir.appendingPathComponent(GameFiles.state + ".dl")
+        return GameFiles.parts.map { GameFiles.dir.appendingPathComponent($0 + ".dl") } + [st]
+    }
+
+    // files picked in the Files app: .gz parts, the .zst state, or an already unpacked windows95.img
+    func importPicked(_ urls: [URL]) -> String? {
+        let fm = FileManager.default
+        for u in urls {
+            let n = u.lastPathComponent.lowercased()
+            var dest: URL?
+            if n.hasSuffix(".zst") { dest = GameFiles.stateFile }
+            else if n.hasSuffix(".img") { dest = GameFiles.disk }
+            else if n.contains(".gz") {
+                for (i, part) in GameFiles.parts.enumerated() where n.contains("part\(i + 1)") {
+                    dest = GameFiles.dir.appendingPathComponent(part + ".dl")
+                }
+            }
+            guard let d = dest else { continue }
+            try? fm.removeItem(at: d)
+            do { try fm.moveItem(at: u, to: d) } catch {
+                do { try fm.copyItem(at: u, to: d) } catch { return error.localizedDescription }
+            }
+        }
+        if GameFiles.ready() { return nil }
+        if haveLocalParts() { return nil }
+        var missing: [String] = []
+        let hasImg = ((try? fm.attributesOfItem(atPath: GameFiles.disk.path)[.size] as? NSNumber)?.int64Value ?? 0) == GameFiles.diskSize
+        if !hasImg {
+            for p in GameFiles.parts where !fm.fileExists(atPath: GameFiles.dir.appendingPathComponent(p + ".dl").path) { missing.append(p) }
+        }
+        if !fm.fileExists(atPath: GameFiles.stateFile.path) { missing.append(GameFiles.state) }
+        return "ناقص: " + missing.joined(separator: "، ")
+    }
+
+    func startDownload() {
         doneBytes = 0
         downloadAll(GameFiles.parts + [GameFiles.state], index: 0, collected: [])
     }
@@ -277,7 +328,7 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
 
 // MARK: - UI
 
-final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDelegate {
+final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDelegate, UIDocumentPickerDelegate {
     var web: WKWebView!
     let preparer = Preparer()
 
@@ -306,6 +357,9 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
             let t = text.replacingOccurrences(of: "\"", with: "'")
             self?.web.evaluateJavaScript("window.lf2Progress && lf2Progress(\"\(t)\", \(f))")
         }
+        preparer.needSource = { [weak self] in
+            self?.web.evaluateJavaScript("window.lf2NeedSource && lf2NeedSource('')")
+        }
         preparer.finished = { [weak self] err in
             if let err = err {
                 let e = err.replacingOccurrences(of: "\"", with: "'")
@@ -320,10 +374,36 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let cmd = body["cmd"] as? String else { return }
         if cmd == "prepare" { DispatchQueue.main.async { self.preparer.run() } }
+        if cmd == "download" { DispatchQueue.main.async { self.preparer.startDownload() } }
+        if cmd == "pick" { DispatchQueue.main.async { self.pickFiles() } }
         if cmd == "reset" {
             try? FileManager.default.removeItem(at: GameFiles.dir)
             DispatchQueue.main.async { self.preparer.run() }
         }
+    }
+
+    func pickFiles() {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        web.evaluateJavaScript("window.lf2Progress && lf2Progress('جارِ نسخ الملفات…', 0.5)")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let err = self.preparer.importPicked(urls)
+            DispatchQueue.main.async {
+                if let err = err {
+                    let e = err.replacingOccurrences(of: "\"", with: "'")
+                    self.web.evaluateJavaScript("window.lf2NeedSource && lf2NeedSource(\"\(e)\")")
+                } else {
+                    self.preparer.run()
+                }
+            }
+        }
+    }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        web.evaluateJavaScript("window.lf2NeedSource && lf2NeedSource('')")
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
