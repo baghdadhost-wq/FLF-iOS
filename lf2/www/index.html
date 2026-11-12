@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>LF2</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #screen_container { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; line-height: 0; }
+  #screen_container > div { white-space: pre; font: 14px/1.1 monospace; color: #cfd6e4; }
+  #screen_container canvas { display: block; image-rendering: pixelated; }
+  #loader { position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; background: #0a0d14; color: #eaeef7; font-family: -apple-system, sans-serif;
+    text-align: center; padding: 20px; direction: rtl }
+  #loader.hidden { display: none }
+  .bar { width: min(420px, 80vw); height: 10px; border-radius: 9px; background: #1b2435; overflow: hidden; border: 1px solid #273349 }
+  .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ff5a3c, #ff8a3c); transition: width .2s }
+  #st { font-size: 15px } #sub { font-size: 12px; color: #93a0b8 }
+  #retry { display: none; padding: 10px 18px; border-radius: 10px; border: 0; background: #ff5a3c; color: #fff; font-size: 15px }
+</style>
+</head>
+<body>
+<div id="screen_container"><div></div><canvas></canvas></div>
+<div id="loader">
+  <div style="font-size:26px;font-weight:800">Little Fighter 2</div>
+  <div id="st">جارِ التحضير…</div>
+  <div class="bar"><div id="bar"></div></div>
+  <div id="sub">التشغيل الأول يحمّل ملفات اللعبة (~95 ميغا) مرة واحدة فقط</div>
+  <button id="retry">إعادة المحاولة</button>
+</div>
+<script src="libv86.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lf2;
+
+window.lf2Progress = (text, frac) => {
+  $("st").textContent = text;
+  if (frac != null) $("bar").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
+};
+window.lf2Error = (msg) => {
+  $("st").textContent = "تعذّر التحميل: " + msg;
+  $("retry").style.display = "block";
+};
+$("retry").onclick = () => { $("retry").style.display = "none"; prepare(); };
+
+function prepare() {
+  lf2Progress("جارِ التحضير…", 0);
+  if (bridge) bridge.postMessage({ cmd: "prepare" });
+  else fetch("disk/windows95.img", { method: "HEAD" })
+    .then((r) => lf2Ready(+r.headers.get("content-length")))
+    .catch((e) => lf2Error(e.message));
+}
+
+// fit the emulator screen to the phone
+function fit() {
+  const c = document.querySelector("#screen_container canvas");
+  const box = $("screen_container");
+  let w = c && c.style.display !== "none" ? c.width : box.offsetWidth;
+  let h = c && c.style.display !== "none" ? c.height : box.offsetHeight;
+  if (!w || !h) return;
+  const s = Math.min(innerWidth / w, innerHeight / h);
+  box.style.transform = `scale(${s}) translate(-50%, -50%)`;
+}
+setInterval(fit, 500);
+addEventListener("resize", fit);
+
+window.lf2Ready = (diskSize) => {
+  lf2Progress("تشغيل Little Fighter 2…", 1);
+  const emulator = window.emulator = new V86({
+    wasm_path: "v86.wasm",
+    memory_size: 64 * 1024 * 1024,      // must match the saved state
+    vga_memory_size: 16 * 1024 * 1024,
+    screen_container: $("screen_container"),
+    bios: { url: "seabios.bin" },
+    vga_bios: { url: "vgabios.bin" },
+    hda: { url: "disk/windows95.img", async: true, size: diskSize },
+    initial_state: { url: "disk/win95-lf2-default.bin.zst" },
+    autostart: true,
+    disable_keyboard: true,              // input comes from the on-screen controls
+    disable_mouse: true,
+  });
+  emulator.add_listener("emulator-ready", () => {
+    $("loader").classList.add("hidden");
+    fit();
+  });
+  emulator.add_listener("screen-set-size", fit);
+};
+
+prepare();
+</script>
+<script src="lf2-touch.js"></script>
+</body>
+</html>

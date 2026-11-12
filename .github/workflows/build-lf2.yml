@@ -1,0 +1,47 @@
+name: Build LF2 (original, v86) IPA
+
+on:
+  push:
+    branches: [main]
+    paths: ['lf2/**', '.github/workflows/build-lf2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile app
+        run: |
+          APP=Payload/LF2.app
+          mkdir -p "$APP"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos swiftc -parse-as-library -O \
+            -target arm64-apple-ios15.0 -sdk "$SDK" \
+            -framework UIKit -framework WebKit -framework AVFoundation -framework Compression \
+            lf2/App/main.swift -o "$APP/LF2"
+          cp lf2/App/Info.plist "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" "$APP/Info.plist"
+          cp lf2/App/AppIcon60x60@2x.png lf2/App/AppIcon60x60@3x.png "$APP/"
+          cp -R lf2/www "$APP/www"
+          plutil -lint "$APP/Info.plist"
+          file "$APP/LF2"
+          zip -qry LF2.ipa Payload
+          ls -lh LF2.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LF2-ipa
+          path: LF2.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="lf2-build-${{ github.run_number }}"
+          gh release create "$TAG" LF2.ipa --title "LF2 original (v86) $TAG" \
+            --notes "Original Little Fighter 2 v1.9 (Windows 95 in v86) for LiveContainer. First launch downloads the game disk (~95 MB) once." --latest=false
