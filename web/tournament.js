@@ -179,6 +179,7 @@
     // the human must be players[0] (uses player-1 controls)
     if (a.me) { add(a, 1); add(b, 2) } else { add(b, 1); add(a, 2) }
     if (!T.started) { M.start_game(); T.started = true }
+    window.__flfAutoClose = true
     M.start_match({ players: players, options: { background: -1 } })
   }
 

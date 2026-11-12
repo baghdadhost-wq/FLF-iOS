@@ -3,13 +3,13 @@ usage: python3 patch-engine.py <path to F.LF>"""
 import sys, os
 root = sys.argv[1]
 
-def patch(rel, old, new, tag):
+def patch(rel, old, new, tag, count=-1):
     p = os.path.join(root, rel)
     s = open(p).read()
     if tag in s:
         return
     assert old in s, rel + ': pattern not found'
-    s = s.replace(old, new)
+    s = s.replace(old, new, count)
     open(p, 'w').write(s)
 
 # opoints that spawn a whole character (Julian's mirror image) are not supported: skip instead of crashing
@@ -88,7 +88,7 @@ patch('LF/match.js',
 patch('LF/match.js',
       "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook",
       "      if (window.__flfTourney && window.__flfTourney.onExit($)) return // FLF-iOS: tournament hook\n"
-      "      if (window.__flfStage && window.__flfStage.onExit($)) return // FLF-iOS: stage exit",
+      "      if (window.__flfStage && window.__flfStage.onExit($, reason)) return // FLF-iOS: stage exit",
       'FLF-iOS: stage exit')
 # stage mode: movable walking limit for the player's team (mechanics) and camera limit (background)
 patch('LF/mechanics.js',
@@ -104,4 +104,25 @@ patch('LF/background.js',
       "        if (xLimit > $.width - screenW) xLimit = $.width - screenW\n"
       "        if ($.camlimit != null && xLimit > $.camlimit - screenW) xLimit = Math.max(0, $.camlimit - screenW) // FLF-iOS: stage camera",
       'FLF-iOS: stage camera')
+# exit reasons + let stage mode veto accidental exits; remember the running match
+patch('LF/match.js',
+      "    match.prototype.F4 = function () {\n      const $ = this\n      $.destroy()",
+      "    match.prototype.F4 = function (reason) { // FLF-iOS: exit reason\n      const $ = this\n"
+      "      if (window.__flfStage && window.__flfStage.ignoreExit && window.__flfStage.ignoreExit($, reason)) return\n"
+      "      $.destroy()",
+      'FLF-iOS: exit reason')
+patch('LF/match.js',
+      "            if (K === 'att' || K === 'jump') {\n              $.F4()",
+      "            if (K === 'att' || K === 'jump') {\n              $.F4('gameover') // FLF-iOS: reason gameover",
+      'FLF-iOS: reason gameover')
+patch('LF/match.js',
+      "                case 'esc':\n                case 'F4':\n                  $.F4()",
+      "                case 'esc':\n                case 'F4':\n                  $.F4('key:' + I) // FLF-iOS: reason key",
+      'FLF-iOS: reason key')
+patch('LF/match.js',
+      "      $.gameover_state = false",
+      "      $.gameover_state = false\n      if (window.__flfCurrentMatch && window.__flfCurrentMatch !== $ && !window.__flfCurrentMatch.destroyed && window.__flfAutoClose) {\n"
+      "        try { window.__flfCurrentMatch.destroy() } catch (e) {} // FLF-iOS: close stray match\n      }\n"
+      "      window.__flfAutoClose = false\n      window.__flfCurrentMatch = $",
+      'FLF-iOS: close stray match', 1)
 print('engine patched')

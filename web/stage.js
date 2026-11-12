@@ -135,15 +135,18 @@
     S.stage = st; S.phase = -1; S.loading = true; S.t = 0; S.pending = []; S.enemies = {}
     S.result = null; S.deadT = 0; S.clearT = 0
     if (!S.started) { M.start_game(); S.started = true }
+    window.__flfAutoClose = true      // the engine closes any match still running in the background
     var match = M.start_match({
       players: [{ use: true, name: 'You', type: 'human', selected: S.pick, selected_AI: 0, team: 1 }],
       options: { background: AREA_BG[S.area] }
     })
     S.match = match
     flash(stageTitle(st), 2500)
+    var mine = S
     match.data.load({ object: neededObjects(st), AI: [1] }, function () {
-      S.loading = false
+      mine.loading = false
     })
+    setTimeout(function () { if (mine.loading) mine.loading = false }, 12000)   // never stay stuck loading
   }
 
   function humans(m) {
@@ -305,11 +308,18 @@
 
   window.__flfStage = {
     tick: tick,
-    onExit: function (m) {           // Esc / F4 during a stage
+    ignoreExit: function (m, reason) {
+      if (!S || S.match !== m || S.result) return false
+      if (reason === 'gameover') return true            // stage mode handles game over itself
+      if (S.loading || S.t < 90) return true            // ignore exits in the first seconds of a stage
+      return false
+    },
+    onExit: function (m, reason) {   // Esc / F4 during a stage
       if (!S || S.match !== m) return false
+      S.exitReason = (reason || '?') + ' @' + S.t
       if (S.result) return true       // our own end screen is handling it
       setHud('')
-      show('<h2>⏸ خرجت من المرحلة</h2><button class="go" id="s_retry">أعد المرحلة</button><button id="s_menu">اختيار آخر</button><button id="s_quit">خروج</button>')
+      show('<h2>⏸ خرجت من المرحلة</h2><div style="font-size:11px;opacity:.6;direction:ltr">' + S.exitReason + '</div><button class="go" id="s_retry">أعد المرحلة</button><button id="s_menu">اختيار آخر</button><button id="s_quit">خروج</button>')
       box.querySelector('#s_retry').onclick = function () { startStage() }
       box.querySelector('#s_menu').onclick = openSetup
       box.querySelector('#s_quit').onclick = quit

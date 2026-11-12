@@ -303,7 +303,7 @@
     labelSpecials(); layout()
     window.addEventListener('resize', layout); window.addEventListener('orientationchange', function () { setTimeout(layout, 300) })
     // stop page pinch / double-tap zoom & rubber-banding while playing
-    document.addEventListener('touchmove', function (e) { if (e.target.closest && e.target.closest('#moves')) return; e.preventDefault() }, { passive: false })
+    document.addEventListener('touchmove', function (e) { if (e.target.closest && e.target.closest('#moves, #lfstage, #tourney, .lobby')) return; e.preventDefault() }, { passive: false })
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount()
 
