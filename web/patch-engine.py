@@ -26,4 +26,19 @@ patch('LF/character.js',
       "var sp_itr = ($.data.frame[72] && $.data.frame[72].itr) || ($.data.frame[73] && $.data.frame[73].itr) // FLF-iOS: no super punch guard\n"
       "                var hit = sp_itr ? $.scene.query($.mech.volume(Futil.make_array(sp_itr)[0]), $, { tag: 'itr:6', not_team: $.team }) : []",
       'FLF-iOS: no super punch guard')
+# drinks (milk/beer): pressing attack while holding one drinks it
+patch('LF/character.js',
+      "                  var dx = $.con.state.left !== $.con.state.right\n                  if ($.hold.obj.type === 'heavyweapon') {",
+      "                  var dx = $.con.state.left !== $.con.state.right\n"
+      "                  var DRK = $.proper($.hold.obj.id, 'drink') // FLF-iOS: drinks\n"
+      "                  if (DRK) {\n"
+      "                    $.effect.heal = ($.effect.heal || 0) + (DRK.hp || 0)\n"
+      "                    $.health.mp = Math.min($.health.mp_full, $.health.mp + (DRK.mp || 0))\n"
+      "                    $.hold.obj.health.hp -= (DRK.sip || 150)\n"
+      "                    if ($.hold.obj.health.hp <= 0) { var empty = $.hold.obj; $.drop_weapon(0, 0); empty.health.hp = 0 }\n"
+      "                    $.trans.frame(55, 10)\n"
+      "                    return 1\n"
+      "                  }\n"
+      "                  if ($.hold.obj.type === 'heavyweapon') {",
+      'FLF-iOS: drinks')
 print('engine patched')

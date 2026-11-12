@@ -45,6 +45,11 @@ define({
 
 		{id:100, type:'lightweapon', file:'data/weapon0.js'}, //stick
 		{id:101, type:'lightweapon', file:'data/weapon2.js'}, //hoe
+		{id:120, type:'lightweapon', file:'data/weapon4.js'}, //knife
+		{id:121, type:'lightweapon', file:'data/weapon5.js'}, //baseball
+		{id:122, type:'lightweapon', file:'data/weapon6.js'}, //milk
+		{id:123, type:'lightweapon', file:'data/weapon8.js'}, //beer
+		{id:124, type:'lightweapon', file:'data/weapon9.js'}, //boomerang
 		{id:150, type:'heavyweapon', file:'data/weapon1.js'}, //stone
 		{id:151, type:'heavyweapon', file:'data/weapon3.js'}, //wooden_box
 
