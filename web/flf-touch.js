@@ -97,7 +97,13 @@
     '#flfpad #moves button{margin:3px;padding:6px 10px;border-radius:8px;border:1px solid #7a8cff;background:#1b2560;color:#fff;font-size:13px}' +
     '#flfpad #moves button.sel{background:#7a8cff}' +
     '#flfpad #moves table{width:100%;border-collapse:collapse;margin-top:6px} #flfpad #moves td{border-bottom:1px solid #334;padding:4px}' +
-    '#flfpad.hidden .b,#flfpad.hidden #dpad{opacity:.0;pointer-events:none} #flfpad.hidden #tog{opacity:1;pointer-events:auto}'
+    '#flfpad.hidden .b,#flfpad.hidden #dpad,#flfpad.hidden #vkb{opacity:.0;pointer-events:none} #flfpad.hidden #tog{opacity:1;pointer-events:auto}'
+  css += '#flfpad #vkb{position:absolute;left:0;right:0;bottom:0;display:none;pointer-events:auto;background:rgba(10,12,30,.93);' +
+    'padding:4px 4px 6px;border-top:2px solid #7a8cff;direction:ltr;touch-action:none}' +
+    '#flfpad #vkb .r{display:flex;justify-content:center;margin:3px 0}' +
+    '#flfpad #vkb .k{flex:0 0 auto;min-width:6.4%;margin:0 2px;padding:5px 0;border-radius:6px;background:#2a3370;color:#fff;' +
+    'text-align:center;font-size:13px;font-weight:600;border:1px solid #556}' +
+    '#flfpad #vkb .k.on{background:#ff78a0}'
   var st = document.createElement('style'); st.textContent = css
 
   var root = document.createElement('div'); root.id = 'flfpad'
@@ -163,6 +169,42 @@
   var fkBtns = fkeys.map(function (f) { var b = mk('fk', f[1]); tapBtn(b, function () { tap(f[0], 60) }); return b })
   var helpBtn = mk('fk', 'الحركات'); var tog = mk('fk', '👁'); tog.id = 'tog'
   tapBtn(tog, function () { root.classList.toggle('hidden') })
+
+  // full virtual keyboard: every key goes straight to the game as a real key press
+  var kbBtn = mk('fk', '⌨')
+  var vkb = document.createElement('div'); vkb.id = 'vkb'; root.appendChild(vkb)
+  var KB_ROWS = [
+    [['Esc', 27], ['F1', 112], ['F2', 113], ['F3', 114], ['F4', 115], ['F5', 116], ['F6', 117], ['F7', 118], ['F8', 119], ['F9', 120], ['F10', 121], ['⌫', 8]],
+    '1234567890-='.split(''),
+    'QWERTYUIOP[]'.split(''),
+    'ASDFGHJKL;\'\\'.split(''),
+    'ZXCVBNM,./'.split('').concat([['Enter', 13]]),
+    [['Shift', 16], ['Ctrl', 17], ['Tab', 9], ['Space', 32, 3], ['←', 37], ['↑', 38], ['↓', 40], ['→', 39], ['إخفاء', 0]]
+  ]
+  var SYM = { '-': 189, '=': 187, '[': 219, ']': 221, ';': 186, "'": 222, ',': 188, '.': 190, '/': 191, '\\': 220 }
+  KB_ROWS.forEach(function (row) {
+    var r = document.createElement('div'); r.className = 'r'
+    row.forEach(function (k) {
+      var label, code, grow = 1
+      if (typeof k === 'string') { label = k; code = SYM[k] || k.charCodeAt(0) } else { label = k[0]; code = k[1]; grow = k[2] || 1 }
+      var el = document.createElement('div'); el.className = 'k'; el.textContent = label
+      if (grow > 1) el.style.minWidth = (6.4 * grow) + '%'
+      if (label === 'Enter' || label === 'Shift' || label === 'إخفاء') el.style.minWidth = '11%'
+      var on = false
+      el.addEventListener('pointerdown', function (e) {
+        e.preventDefault(); e.stopPropagation()
+        if (!code) { vkb.style.display = 'none'; return }
+        try { el.setPointerCapture(e.pointerId) } catch (x) {}
+        on = true; el.classList.add('on'); send('keydown', code)
+        if (code === 37 || code === 39) facing = code === 37 ? 'left' : 'right'
+      })
+      function up() { if (!on) return; on = false; el.classList.remove('on'); send('keyup', code) }
+      el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('lostpointercapture', up)
+      r.appendChild(el)
+    })
+    vkb.appendChild(r)
+  })
+  tapBtn(kbBtn, function () { vkb.style.display = vkb.style.display === 'block' ? 'none' : 'block' })
 
   // move list panel
   var panel = document.createElement('div'); panel.id = 'moves'; root.appendChild(panel)
@@ -233,8 +275,9 @@
     // function keys top-left
     var fw = 46 * s, fh = 28 * s
     var fx = safeL
-    fkBtns.concat([helpBtn, tog]).forEach(function (b, i) { var ww = b === helpBtn ? 64 * s : fw; place(b, fx, 6 * s, ww, fh); fx += ww + 4 * s })
+    fkBtns.concat([kbBtn, helpBtn, tog]).forEach(function (b, i) { var ww = b === helpBtn ? 64 * s : fw; place(b, fx, 6 * s, ww, fh); fx += ww + 4 * s })
     root.style.fontSize = (14 * s) + 'px'
+    Array.prototype.forEach.call(vkb.querySelectorAll('.k'), function (k) { k.style.fontSize = (13 * s) + 'px'; k.style.padding = (5 * s) + 'px 0' })
     Array.prototype.forEach.call(root.querySelectorAll('.A,.J,.D'), function (b) { b.style.fontSize = (17 * s) + 'px' })
   }
 
