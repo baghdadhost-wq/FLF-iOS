@@ -26,7 +26,11 @@ enum GameFiles {
     static var disk: URL { dir.appendingPathComponent("windows95.img") }
     static var stateFile: URL { dir.appendingPathComponent(state) }
 
-    static func ready() -> Bool {
+    // CRC32 of the good unpacked disk (also stored in the gzip trailer of part3)
+    static let diskCRC: UInt32 = 0xe86a8b44
+    static var okMark: URL { dir.appendingPathComponent("windows95.img.ok") }
+
+    static func sizeOK() -> Bool {
         let fm = FileManager.default
         guard let a = try? fm.attributesOfItem(atPath: disk.path),
               (a[.size] as? NSNumber)?.int64Value == diskSize,
@@ -34,6 +38,54 @@ enum GameFiles {
               ((b[.size] as? NSNumber)?.int64Value ?? 0) > 1_000_000 else { return false }
         return true
     }
+    // full build: the disk is shipped inside the app (folder "game"), checked on the build machine
+    static var bundledDisk: URL? {
+        let u = Bundle.main.resourceURL!.appendingPathComponent("game/windows95.img")
+        guard let a = try? FileManager.default.attributesOfItem(atPath: u.path),
+              (a[.size] as? NSNumber)?.int64Value == diskSize else { return nil }
+        return u
+    }
+    static func ready() -> Bool {
+        if bundledDisk != nil { return true }
+        return sizeOK() && FileManager.default.fileExists(atPath: okMark.path)
+    }
+
+    // read the whole disk and compare its checksum; writes the "ok" mark when it matches
+    static func verifyDisk(progress: (Double) -> Void = { _ in }) -> Bool {
+        guard let h = try? FileHandle(forReadingFrom: disk) else { return false }
+        defer { try? h.close() }
+        var c = CRC32()
+        var done: Int64 = 0
+        while true {
+            let d = autoreleasepool { h.readData(ofLength: 4 << 20) }
+            if d.isEmpty { break }
+            c.update(d); done += Int64(d.count)
+            progress(Double(done) / Double(diskSize))
+        }
+        guard done == diskSize, c.value == diskCRC else { return false }
+        FileManager.default.createFile(atPath: okMark.path, contents: Data("ok".utf8))
+        return true
+    }
+}
+
+struct CRC32 {
+    static let table: [UInt32] = (0..<256).map { i -> UInt32 in
+        var c = UInt32(i)
+        for _ in 0..<8 { c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1 }
+        return c
+    }
+    private var crc: UInt32 = 0xFFFFFFFF
+    mutating func update(_ d: Data) {
+        d.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in update(raw) }
+    }
+    mutating func update(_ raw: UnsafeRawBufferPointer) {
+        var c = crc
+        CRC32.table.withUnsafeBufferPointer { t in
+            for b in raw { c = t[Int((c ^ UInt32(b)) & 0xFF)] ^ (c >> 8) }
+        }
+        crc = c
+    }
+    var value: UInt32 { crc ^ 0xFFFFFFFF }
 }
 
 final class Preparer: NSObject {
@@ -46,6 +98,20 @@ final class Preparer: NSObject {
 
     func run() {
         if GameFiles.ready() { finished(nil); return }
+        if GameFiles.sizeOK() {
+            // disk from an older version or picked from Files: check it once before booting
+            report("جارِ فحص سلامة القرص…", 0)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let good = GameFiles.verifyDisk { f in DispatchQueue.main.async { self.report("جارِ فحص سلامة القرص…", f) } }
+                DispatchQueue.main.async {
+                    if good { self.finished(nil); return }
+                    try? FileManager.default.removeItem(at: GameFiles.disk)
+                    self.report("القرص كان تالفاً، سيُعاد تجهيزه…", nil)
+                    if self.haveLocalParts() { self.unpack(self.localParts()) } else { self.needSource() }
+                }
+            }
+            return
+        }
         if haveLocalParts() { unpack(localParts()); return }
         needSource()
     }
@@ -82,8 +148,7 @@ final class Preparer: NSObject {
                 do { try fm.copyItem(at: u, to: d) } catch { return error.localizedDescription }
             }
         }
-        if GameFiles.ready() { return nil }
-        if haveLocalParts() { return nil }
+        if GameFiles.sizeOK() || haveLocalParts() { return nil }
         var missing: [String] = []
         let hasImg = ((try? fm.attributesOfItem(atPath: GameFiles.disk.path)[.size] as? NSNumber)?.int64Value ?? 0) == GameFiles.diskSize
         if !hasImg {
@@ -156,6 +221,7 @@ final class Preparer: NSObject {
             let gz = Array(files.prefix(GameFiles.parts.count))
             let stateDl = files.last!
             let tmp = GameFiles.dir.appendingPathComponent("windows95.img.tmp")
+            try? FileManager.default.removeItem(at: GameFiles.okMark)
             do {
                 // put the saved state in place first (also used by the in-page fallback)
                 if stateDl != GameFiles.stateFile && FileManager.default.fileExists(atPath: stateDl.path) {
@@ -168,6 +234,7 @@ final class Preparer: NSObject {
                 let fm = FileManager.default
                 try? fm.removeItem(at: GameFiles.disk)
                 try fm.moveItem(at: tmp, to: GameFiles.disk)
+                fm.createFile(atPath: GameFiles.okMark.path, contents: Data("ok".utf8))
                 gz.forEach { try? fm.removeItem(at: $0) }
                 DispatchQueue.main.async {
                     if GameFiles.ready() { self.finished(nil) } else { self.finished("unpack:الملف غير مكتمل") }
@@ -205,6 +272,7 @@ final class Preparer: NSObject {
         var headerSkipped = false
         var ended = false
         var written: Int64 = 0
+        var crc = CRC32()
 
         func pump(_ data: Data, finalize: Bool) throws {
             try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -220,7 +288,10 @@ final class Preparer: NSObject {
                     let st = compression_stream_process(stream, finalize ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0)
                     if st == COMPRESSION_STATUS_ERROR { throw GzError(msg: "خطأ في فك الضغط") }
                     let n = dstSize - stream.pointee.dst_size
-                    if n > 0 { outH.write(Data(bytes: dst, count: n)); written += Int64(n) }
+                    if n > 0 {
+                        crc.update(UnsafeRawBufferPointer(start: dst, count: n))
+                        outH.write(Data(bytes: dst, count: n)); written += Int64(n)
+                    }
                     if st == COMPRESSION_STATUS_END { ended = true; return }
                     if n == 0 && stream.pointee.src_size == 0 {
                         idle += 1
@@ -254,6 +325,18 @@ final class Preparer: NSObject {
         }
         if !ended { try pump(Data([0]).prefix(0), finalize: true) }
         guard written == GameFiles.diskSize else { throw GzError(msg: "حجم غير صحيح \(written)") }
+        // compare with the CRC32 stored in the gzip trailer (last 8 bytes: CRC32, size)
+        var expect = GameFiles.diskCRC
+        if let last = inputs.last, let h = try? FileHandle(forReadingFrom: last) {
+            let end = h.seekToEndOfFile()
+            if end >= 8 {
+                h.seek(toFileOffset: end - 8)
+                let t = [UInt8](h.readData(ofLength: 4))
+                if t.count == 4 { expect = UInt32(t[0]) | UInt32(t[1]) << 8 | UInt32(t[2]) << 16 | UInt32(t[3]) << 24 }
+            }
+            try? h.close()
+        }
+        guard crc.value == expect else { throw GzError(msg: "فحص السلامة فشل (CRC)") }
     }
 }
 
@@ -276,7 +359,9 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
 
         let file: URL
         if path.hasPrefix("disk/") {
-            file = GameFiles.dir.appendingPathComponent(String(path.dropFirst(5)))
+            let name = String(path.dropFirst(5))
+            if name == "windows95.img", let b = GameFiles.bundledDisk { file = b }
+            else { file = GameFiles.dir.appendingPathComponent(name) }
         } else {
             file = www.appendingPathComponent(path)
         }
@@ -292,7 +377,8 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
         var start: Int64 = 0
         var end: Int64 = total - 1
         var status = 200
-        var headers = ["Content-Type": type, "Accept-Ranges": "bytes", "Access-Control-Allow-Origin": "*"]
+        var headers = ["Content-Type": type, "Accept-Ranges": "bytes", "Access-Control-Allow-Origin": "*",
+                       "Cache-Control": "no-store"]
         if let range = task.request.value(forHTTPHeaderField: "Range"), range.hasPrefix("bytes=") {
             let p = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
             if let s = Int64(p.first ?? "") {
