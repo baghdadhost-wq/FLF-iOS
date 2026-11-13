@@ -1,8 +1,9 @@
 name: Build OpenLF2 (no Windows, all devices)
 
 # OpenLF2 = open-source re-implementation of Little Fighter 2 v2.0a (C++/SDL3, no Windows, no emulator).
-# The iOS IPA is built from source with the original LF2 v2.0a game data shipped inside it, so it
-# works offline from the first launch. The release also carries the official Android APKs.
+# iOS IPA and Android APKs are built from the SAME patched source, each with the original LF2 v2.0a game
+# data inside, so they work offline from the first launch and can play network games with each other
+# (same scripts digest, and both use the LuaJIT interpreter).
 #
 # Built in stages: compiled dependencies (Conan) are cached even when a run fails or times out,
 # so the next run continues from where the last one stopped.
@@ -32,23 +33,7 @@ jobs:
           python3 openlf2/patch.py src
 
       - name: Stage 2 — get the original LF2 v2.0a game data
-        run: |
-          set +e
-          mkdir -p game
-          for url in \
-            "https://lf2.net/LF2_v2.0a.exe" \
-            "https://web.archive.org/web/20260921121026id_/https://lf2.net/LF2_v2.0a.exe" \
-            "https://archive.org/download/little-fighter-2_202404/Little%20Fighter%202.rar/Little%20Fighter%202%2FLF2Setup.exe"; do
-            echo "trying $url"
-            curl -fL --retry 3 -o game/installer.exe "$url" || continue
-            size=$(stat -f%z game/installer.exe)
-            echo "size $size"
-            if [ "$size" = "29586263" ]; then mv game/installer.exe game/LF2_v2.0a.exe; break; fi
-            if [ "$size" = "31904750" ]; then mv game/installer.exe game/lf2_v20a_Setup.exe; break; fi
-            rm -f game/installer.exe
-          done
-          ls -l game
-          ls game/*.exe >/dev/null 2>&1 || { echo "::error::could not download the LF2 v2.0a installer"; exit 1; }
+        run: bash openlf2/get-installer.sh game
 
       - uses: actions/setup-python@v5
         with:
@@ -95,16 +80,99 @@ jobs:
           name: LF2-OpenLF2-ipa
           path: LF2-OpenLF2.ipa
 
+  android:
+    name: Android ${{ matrix.abi }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage 1 — get OpenLF2 source and patch it (same patch as iOS)
+        run: |
+          git clone --depth 1 --branch "$OPENLF2_REF" https://github.com/OpenLF2/OpenLF2.git src
+          python3 openlf2/patch.py src
+
+      - name: Stage 2 — get the original LF2 v2.0a game data into the APK assets
+        run: |
+          bash openlf2/get-installer.sh game
+          mkdir -p src/build/android/assets
+          cp game/*.exe src/build/android/assets/
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Install Android SDK/NDK, Conan and build tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+          python3 -m venv "$RUNNER_TEMP/conan-venv"
+          "$RUNNER_TEMP/conan-venv/bin/pip" install 'conan==2.32.0'
+          echo "$RUNNER_TEMP/conan-venv/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config
+          if [ '${{ matrix.abi }}' = 'armeabi-v7a' ]; then sudo apt-get install -y gcc-multilib; fi
+
+      - name: Restore compiled dependencies (from earlier stages)
+        uses: actions/cache/restore@v4
+        with:
+          path: src/build/android/${{ matrix.abi }}/conan-cache.tgz
+          key: openlf2-conan-android-${{ matrix.abi }}-${{ env.OPENLF2_REF }}-${{ github.run_id }}
+          restore-keys: |
+            openlf2-conan-android-${{ matrix.abi }}-${{ env.OPENLF2_REF }}-
+
+      - name: Stage 3 — compile (dependencies + game + APK)
+        working-directory: src
+        run: bash dist/build-android.sh '${{ matrix.abi }}'
+
+      - name: Save compiled dependencies (even if the build failed)
+        if: ${{ always() && hashFiles(format('src/build/android/{0}/conan-cache.tgz', matrix.abi)) != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: src/build/android/${{ matrix.abi }}/conan-cache.tgz
+          key: openlf2-conan-android-${{ matrix.abi }}-${{ env.OPENLF2_REF }}-${{ github.run_id }}
+
+      - name: Check the game data is inside the APK
+        run: |
+          APK=src/out/OpenLF2-Android-api21-${{ matrix.abi }}.apk
+          ls -lh "$APK"
+          unzip -l "$APK" | grep -E "assets/(LF2_v2.0a|lf2_v20a_Setup).exe"
+          cp "$APK" "LF2-OpenLF2-Android-${{ matrix.abi }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LF2-OpenLF2-Android-${{ matrix.abi }}
+          path: LF2-OpenLF2-Android-${{ matrix.abi }}.apk
+
+  release:
+    needs: [ios, android]
+    if: ${{ always() && needs.ios.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish release (iOS + Android)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$OPENLF2_REF" -R OpenLF2/OpenLF2 \
-            -p 'OpenLF2-Android-api21-arm64-v8a.apk' -p 'OpenLF2-Android-api21-armeabi-v7a.apk' || true
-          TAG="openlf2-build-${{ github.run_number }}"
+          ls -lh dist
           shopt -s nullglob
-          FILES=(LF2-OpenLF2.ipa OpenLF2-Android-*.apk)
-          gh release create "$TAG" "${FILES[@]}" --title "LF2 (OpenLF2, no Windows) $TAG" \
-            --notes "Little Fighter 2 v2.0a re-implemented (OpenLF2 $OPENLF2_REF), no Windows and no emulator.
-          - LF2-OpenLF2.ipa: iPhone / iPad (LiveContainer or any sideloader). Game data is inside, works offline.
-          - OpenLF2-Android-*.apk: Android (official build; downloads the game data once on first launch)." --latest=false
+          FILES=(dist/*.ipa dist/*.apk)
+          TAG="openlf2-build-${{ github.run_number }}"
+          gh release create "$TAG" "${FILES[@]}" --repo "${{ github.repository }}" \
+            --title "LF2 (OpenLF2, no Windows) $TAG" --latest=false \
+            --notes "Little Fighter 2 v2.0a re-implemented (OpenLF2 $OPENLF2_REF), no Windows, no emulator. Game data inside: works offline.
+          - LF2-OpenLF2.ipa: iPhone / iPad (LiveContainer or any sideloader).
+          - LF2-OpenLF2-Android-arm64-v8a.apk: most Android phones. LF2-OpenLF2-Android-armeabi-v7a.apk: older 32-bit phones.
+          iPhone and Android builds come from the same patched source, so they can play network games together (same Wi-Fi: one taps Waiting for Opponent, the other Connect to Opponent with the IP shown)."
