@@ -364,15 +364,24 @@ index 7819dc1..a72605a 100644
      function context.fullscreen(active) command(FrameOpcode.fullscreen, active) end
      -- Smooth motion (OpenLF2 extension): the host may show pictures between two frames, moving every motion group.
 diff --git a/src/adapters/luajit/runtime.cpp b/src/adapters/luajit/runtime.cpp
-index 0a3b77f..78452e0 100644
+index 0a3b77f..b1bec60 100644
 --- a/src/adapters/luajit/runtime.cpp
 +++ b/src/adapters/luajit/runtime.cpp
-@@ -19,6 +19,14 @@
+@@ -19,6 +19,23 @@
  #include <stdexcept>
  #include <utility>
  extern "C" {
 +#include <string>
-+#if (defined(__APPLE__) || defined(__linux__) || defined(__ANDROID__)) && !defined(__EMSCRIPTEN__) && !defined(__SWITCH__)
++#if defined(__ANDROID__) && __ANDROID_API__ < 24
++// getifaddrs() only exists from Android API 24; older APIs list addresses with SIOCGIFCONF.
++#include <arpa/inet.h>
++#include <net/if.h>
++#include <netinet/in.h>
++#include <sys/ioctl.h>
++#include <sys/socket.h>
++#include <unistd.h>
++#define OPENLF2_HAS_IFCONF 1
++#elif (defined(__APPLE__) || defined(__linux__) || defined(__ANDROID__)) && !defined(__EMSCRIPTEN__) && !defined(__SWITCH__)
 +#include <arpa/inet.h>
 +#include <ifaddrs.h>
 +#include <net/if.h>
@@ -382,7 +391,7 @@ index 0a3b77f..78452e0 100644
  #include <lua.h>
  #include <lauxlib.h>
  #include <lualib.h>
-@@ -187,7 +195,7 @@ int create_bridge_slot(lua_State* state) {
+@@ -187,7 +204,7 @@ int create_bridge_slot(lua_State* state) {
  enum class FrameOpcode {
      viewport = 1, sprite, fill, overlay, render_area, clip, sound, rumble,
      music, speed, render_filter, text_input, replay_drop, fullscreen, action, text, file_dialog, world_sprite,
@@ -391,7 +400,7 @@ index 0a3b77f..78452e0 100644
  };
  class FrameReader {
  public:
-@@ -265,7 +273,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+@@ -265,7 +282,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
              group.reset();
          };
          while (reader.remaining()) {
@@ -400,7 +409,7 @@ index 0a3b77f..78452e0 100644
              const bool grouping = opcode == FrameOpcode::motion_begin || opcode == FrameOpcode::motion_end;
              if (!grouping && ++commands > 4096) throw std::runtime_error("too many frame commands");
              switch (opcode) {
-@@ -347,6 +355,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+@@ -347,6 +364,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
              case FrameOpcode::replay_drop: set_flag(frame.replay_drop); break;
              case FrameOpcode::fullscreen: set_flag(frame.fullscreen); break;
              case FrameOpcode::smooth_motion: set_flag(frame.smooth_motion); break;
@@ -408,7 +417,7 @@ index 0a3b77f..78452e0 100644
              case FrameOpcode::motion_begin:
                  close_group();
                  if (frame.motion.size() >= 2048) throw std::runtime_error("too many motion groups");
-@@ -593,6 +602,34 @@ int local_time(lua_State* state) {
+@@ -593,6 +611,59 @@ int local_time(lua_State* state) {
      lua_pushlstring(state, bridge->pending_text.data(), bridge->pending_text.size());
      return 1;
  }
@@ -416,25 +425,50 @@ index 0a3b77f..78452e0 100644
 +// hotspot bridge, then anything else that is up), or nil.
 +int local_ip(lua_State* state) {
 +    std::string best;
-+#ifdef OPENLF2_HAS_IFADDRS
++    int best_rank = -1;
++    // Wi-Fi first, then a hotspot, then anything else that is up (cellular); never link-local.
++    const auto consider = [&best, &best_rank](const std::string& name, const sockaddr_in* address) {
++        char text[INET_ADDRSTRLEN] = {};
++        if (inet_ntop(AF_INET, &address->sin_addr, text, sizeof(text)) == nullptr) return;
++        int rank = 1;
++        if (name.rfind("en", 0) == 0 || name.rfind("wlan", 0) == 0 || name.rfind("eth", 0) == 0) rank = 3;
++        else if (name.rfind("bridge", 0) == 0 || name.rfind("ap", 0) == 0 || name.rfind("swlan", 0) == 0) rank = 2;
++        if (std::strncmp(text, "169.254.", 8) == 0) rank = 0;
++        if (rank > best_rank) { best_rank = rank; best = text; }
++    };
++#if defined(OPENLF2_HAS_IFADDRS)
 +    ifaddrs* list = nullptr;
 +    if (getifaddrs(&list) == 0) {
-+        int best_rank = -1;
 +        for (auto* entry = list; entry != nullptr; entry = entry->ifa_next) {
 +            if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_INET) continue;
 +            if ((entry->ifa_flags & IFF_UP) == 0 || (entry->ifa_flags & IFF_LOOPBACK) != 0) continue;
-+            char text[INET_ADDRSTRLEN] = {};
-+            const auto* address = reinterpret_cast<const sockaddr_in*>(entry->ifa_addr);
-+            if (inet_ntop(AF_INET, &address->sin_addr, text, sizeof(text)) == nullptr) continue;
-+            const std::string name = entry->ifa_name != nullptr ? entry->ifa_name : "";
-+            int rank = 1;
-+            if (name.rfind("en", 0) == 0 || name.rfind("wlan", 0) == 0 || name.rfind("eth", 0) == 0) rank = 3;
-+            else if (name.rfind("bridge", 0) == 0 || name.rfind("ap", 0) == 0 || name.rfind("swlan", 0) == 0) rank = 2;
-+            if (std::strncmp(text, "169.254.", 8) == 0) rank = 0;
-+            if (rank > best_rank) { best_rank = rank; best = text; }
++            consider(entry->ifa_name != nullptr ? entry->ifa_name : "",
++                     reinterpret_cast<const sockaddr_in*>(entry->ifa_addr));
 +        }
 +        freeifaddrs(list);
 +    }
++#elif defined(OPENLF2_HAS_IFCONF)
++    const int socket_handle = socket(AF_INET, SOCK_DGRAM, 0);
++    if (socket_handle >= 0) {
++        ifreq requests[32] = {};
++        ifconf configuration{};
++        configuration.ifc_len = static_cast<int>(sizeof(requests));
++        configuration.ifc_req = requests;
++        if (ioctl(socket_handle, SIOCGIFCONF, &configuration) == 0) {
++            const int count = configuration.ifc_len / static_cast<int>(sizeof(ifreq));
++            for (int index = 0; index < count && index < 32; ++index) {
++                const ifreq& request = requests[index];
++                if (request.ifr_addr.sa_family != AF_INET) continue;
++                ifreq flags = request;
++                if (ioctl(socket_handle, SIOCGIFFLAGS, &flags) != 0) continue;
++                if ((flags.ifr_flags & IFF_UP) == 0 || (flags.ifr_flags & IFF_LOOPBACK) != 0) continue;
++                consider(std::string(request.ifr_name), reinterpret_cast<const sockaddr_in*>(&request.ifr_addr));
++            }
++        }
++        close(socket_handle);
++    }
++#else
++    (void)consider;
 +#endif
 +    if (best.empty()) lua_pushnil(state);
 +    else lua_pushlstring(state, best.data(), best.size());
@@ -443,7 +477,7 @@ index 0a3b77f..78452e0 100644
  // Returns the configuration table, or nil and a message when none is stored or it is unreadable.
  int read_settings(lua_State* state) {
      auto* bridge = resource_bridge(state);
-@@ -712,7 +749,8 @@ int open_libraries(lua_State* state) {
+@@ -712,7 +783,8 @@ int open_libraries(lua_State* state) {
          {"openlf2_network", network_operation}, {"openlf2_network_time", network_time},
          {"openlf2_random_state", random_state}, {"openlf2_set_random_state", set_random_state},
          {"openlf2_reset_random_sequence", reset_random_sequence}, {"openlf2_save_recording", save_recording},
