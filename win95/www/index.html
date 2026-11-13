@@ -200,6 +200,8 @@ window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
     cdrom: undefined,
     // network card (NE2000) connected to the phone's internet through the app
     net_device: netEnabled() ? { type: "ne2k", relay_url: "wisp://native/", dns_method: "doh" } : undefined,
+    // draw text mode with the real VGA font on the canvas (the HTML text grid breaks on iPhone fonts)
+    screen: { use_graphical_text: true },
     autostart: true,
     disable_keyboard: false,             // a Bluetooth keyboard also works; on-screen keyboard sends scancodes
     disable_mouse: true,                 // mouse comes from the touch trackpad (win-ui.js)
