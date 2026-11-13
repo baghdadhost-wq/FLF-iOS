@@ -3,6 +3,7 @@ import WebKit
 import AVFoundation
 import UniformTypeIdentifiers
 import Network
+import Compression
 
 // MARK: - The Windows XP disk kept on the phone (every change Windows makes is written into it)
 
@@ -60,12 +61,23 @@ enum GameFiles {
 final class Preparer: NSObject {
     var finished: (String?) -> Void = { _ in }
     var needSource: () -> Void = {}
+    var progress: ((String, Double) -> Void)?
     func run() { if GameFiles.ready() { finished(nil) } else { needSource() } }
 
     // a ready XP disk picked in the Files app (.img / .raw / .bin / .hdd)
     func importPicked(_ urls: [URL]) -> String? {
+        if let g = urls.first(where: { $0.pathExtension.lowercased() == "gz" }) {
+            GameFiles.closeDisk()
+            try? FileManager.default.removeItem(at: GameFiles.disk)
+            do {
+                try DiskPack.gunzip(g, to: GameFiles.disk) { f in self.progress?("جارِ فك ضغط القرص…", f) }
+            } catch let e as GzError { try? FileManager.default.removeItem(at: GameFiles.disk); return e.msg }
+            catch { return error.localizedDescription }
+            try? FileManager.default.removeItem(at: g)
+            return GameFiles.ready() ? nil : "الملف صغير جداً ليكون قرص Windows"
+        }
         guard let u = urls.first(where: { ["img", "raw", "bin", "hdd", "ima"].contains($0.pathExtension.lowercased()) }) else {
-            return "اختر ملف قرص (.img) — ملف ISO يُستخدم من زر التثبيت"
+            return "اختر ملف قرص (.img أو .img.gz) — ملف ISO يُستخدم من زر التثبيت"
         }
         GameFiles.closeDisk()
         let fm = FileManager.default
@@ -272,6 +284,132 @@ final class WispBridge {
     }
 }
 
+
+// MARK: - Moving the installed system to another device: export as .img.gz, import .img or .img.gz
+
+struct CRC32 {
+    static let table: [UInt32] = (0..<256).map { i -> UInt32 in
+        var c = UInt32(i)
+        for _ in 0..<8 { c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1 }
+        return c
+    }
+    private var crc: UInt32 = 0xFFFFFFFF
+    mutating func update(_ raw: UnsafeRawBufferPointer) {
+        var c = crc
+        CRC32.table.withUnsafeBufferPointer { t in
+            for b in raw { c = t[Int((c ^ UInt32(b)) & 0xFF)] ^ (c >> 8) }
+        }
+        crc = c
+    }
+    var value: UInt32 { crc ^ 0xFFFFFFFF }
+}
+
+struct GzError: Error { let msg: String }
+
+enum DiskPack {
+    static let chunk = 4 << 20
+
+    // disk -> gzip file (empty parts of the disk shrink to almost nothing)
+    static func gzip(_ src: URL, to dst: URL, progress: (Double) -> Void) throws {
+        let total = (try FileManager.default.attributesOfItem(atPath: src.path)[.size] as? NSNumber)?.int64Value ?? 0
+        guard let inH = try? FileHandle(forReadingFrom: src) else { throw GzError(msg: "تعذّر فتح القرص") }
+        defer { try? inH.close() }
+        FileManager.default.createFile(atPath: dst.path, contents: nil)
+        guard let outH = try? FileHandle(forWritingTo: dst) else { throw GzError(msg: "تعذّر إنشاء الملف") }
+        defer { try? outH.close() }
+        outH.write(Data([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]))
+        let dstBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: chunk)
+        defer { dstBuf.deallocate() }
+        var st = compression_stream(dst_ptr: dstBuf, dst_size: 0, src_ptr: UnsafePointer(dstBuf), src_size: 0, state: nil)
+        guard compression_stream_init(&st, COMPRESSION_STREAM_ENCODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { throw GzError(msg: "zlib") }
+        defer { compression_stream_destroy(&st) }
+        var crc = CRC32(); var done: Int64 = 0
+        while true {
+            let d = autoreleasepool { inH.readData(ofLength: chunk) }
+            let last = d.isEmpty
+            try d.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                if !last { crc.update(raw) }
+                st.src_ptr = raw.bindMemory(to: UInt8.self).baseAddress ?? UnsafePointer(dstBuf)
+                st.src_size = raw.count
+                repeat {
+                    st.dst_ptr = dstBuf; st.dst_size = chunk
+                    let r = compression_stream_process(&st, last ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0)
+                    if r == COMPRESSION_STATUS_ERROR { throw GzError(msg: "ضغط") }
+                    let n = chunk - st.dst_size
+                    if n > 0 { outH.write(Data(bytes: dstBuf, count: n)) }
+                    if r == COMPRESSION_STATUS_END { break }
+                    if !last && st.src_size == 0 && n < chunk { break }
+                } while true
+            }
+            if last { break }
+            done += Int64(d.count)
+            if total > 0 { progress(Double(done) / Double(total)) }
+        }
+        var tail = Data()
+        for v in [crc.value, UInt32(truncatingIfNeeded: done)] {
+            tail.append(contentsOf: [UInt8(v & 0xff), UInt8(v >> 8 & 0xff), UInt8(v >> 16 & 0xff), UInt8(v >> 24 & 0xff)])
+        }
+        outH.write(tail)
+    }
+
+    // .gz -> disk
+    static func gunzip(_ src: URL, to dst: URL, progress: (Double) -> Void) throws {
+        let total = (try FileManager.default.attributesOfItem(atPath: src.path)[.size] as? NSNumber)?.int64Value ?? 1
+        guard let inH = try? FileHandle(forReadingFrom: src) else { throw GzError(msg: "تعذّر فتح الملف") }
+        defer { try? inH.close() }
+        let head = [UInt8](inH.readData(ofLength: 10))
+        guard head.count == 10, head[0] == 0x1f, head[1] == 0x8b, head[2] == 8 else { throw GzError(msg: "ليس ملف gzip") }
+        var pos: UInt64 = 10
+        let flg = head[3]
+        if flg & 4 != 0 {
+            inH.seek(toFileOffset: pos); let x = [UInt8](inH.readData(ofLength: 2))
+            pos += 2 + UInt64(x[0]) + UInt64(x[1]) << 8
+        }
+        for bit in [UInt8(8), UInt8(16)] where flg & bit != 0 {
+            inH.seek(toFileOffset: pos)
+            while true { let b = inH.readData(ofLength: 1); pos += 1; if b.isEmpty || b[b.startIndex] == 0 { break } }
+        }
+        if flg & 2 != 0 { pos += 2 }
+        inH.seek(toFileOffset: pos)
+        FileManager.default.createFile(atPath: dst.path, contents: nil)
+        guard let outH = try? FileHandle(forWritingTo: dst) else { throw GzError(msg: "تعذّر إنشاء القرص") }
+        defer { try? outH.close() }
+        let dstBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: chunk)
+        defer { dstBuf.deallocate() }
+        var st = compression_stream(dst_ptr: dstBuf, dst_size: 0, src_ptr: UnsafePointer(dstBuf), src_size: 0, state: nil)
+        guard compression_stream_init(&st, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { throw GzError(msg: "zlib") }
+        defer { compression_stream_destroy(&st) }
+        var ended = false
+        let zero = Data(count: chunk)
+        while !ended {
+            let d = autoreleasepool { inH.readData(ofLength: chunk) }
+            let last = d.isEmpty
+            try d.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                st.src_ptr = raw.bindMemory(to: UInt8.self).baseAddress ?? UnsafePointer(dstBuf)
+                st.src_size = raw.count
+                repeat {
+                    st.dst_ptr = dstBuf; st.dst_size = chunk
+                    let r = compression_stream_process(&st, last ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0)
+                    if r == COMPRESSION_STATUS_ERROR { throw GzError(msg: "الملف تالف") }
+                    let n = chunk - st.dst_size
+                    if n > 0 {
+                        // keep empty areas sparse: skip writing blocks that are all zeros
+                        if n == chunk && memcmp(dstBuf, (zero as NSData).bytes, n) == 0 {
+                            outH.seek(toFileOffset: outH.offsetInFile + UInt64(n))
+                        } else { outH.write(Data(bytes: dstBuf, count: n)) }
+                    }
+                    if r == COMPRESSION_STATUS_END { ended = true; break }
+                    if st.src_size == 0 && n < chunk && !last { break }
+                    if last && n == 0 { ended = true; break }
+                } while true
+            }
+            progress(Double(inH.offsetInFile) / Double(total))
+            if last { break }
+        }
+        try outH.truncate(atOffset: outH.offsetInFile)
+    }
+}
+
 // MARK: - UI
 
 final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDelegate, UIDocumentPickerDelegate {
@@ -300,6 +438,9 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
     override func viewDidLoad() {
         super.viewDidLoad()
         GameFiles.web = web
+        preparer.progress = { [weak self] text, f in
+            DispatchQueue.main.async { self?.web.evaluateJavaScript("window.lf2Progress && lf2Progress('\(text)', \(f))") }
+        }
         preparer.needSource = { [weak self] in
             self?.web.evaluateJavaScript("window.lf2NeedSource && lf2NeedSource('')")
         }
@@ -338,6 +479,7 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         if cmd == "w", let o = body["o"] as? NSNumber, let d = body["d"] as? String, let data = Data(base64Encoded: d) {
             GameFiles.write(offset: o.uint64Value, data: data, seq: (body["s"] as? NSNumber)?.intValue ?? 0)
         }
+        if cmd == "export" { exportDisk() }
         if cmd == "deletedisk" {
             let a = UIAlertController(title: "حذف قرص Windows XP؟",
                                       message: "سيُحذف القرص وكل ما بداخله، وتعود لشاشة التثبيت أو اختيار قرص جديد.",
@@ -358,7 +500,57 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         picker.delegate = self
         present(picker, animated: true)
     }
+    var exportTemp: URL?
+    func toast(_ t: String, _ ms: Int = 4000) {
+        web.evaluateJavaScript("window.winSay && winSay('\(t)', \(ms))")
+    }
+    func exportDisk() {
+        guard GameFiles.ready() else { toast("لا يوجد قرص بعد"); return }
+        let a = UIAlertController(title: "استخراج نظام Windows XP",
+                                  message: "أطفئ Windows أولاً (Start ← Turn Off Computer) حتى يُحفظ كل شيء.\nالملف يعمل في هذا التطبيق على جهاز آخر (زر «قرص جاهز»)، أو في QEMU على الكمبيوتر.",
+                                  preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "مضغوط .img.gz (أصغر بكثير — مُستحسن)", style: .default) { _ in self.exportGz() })
+        a.addAction(UIAlertAction(title: "كما هو .img", style: .default) { _ in
+            GameFiles.flush()
+            let p = UIDocumentPickerViewController(forExporting: [GameFiles.disk], asCopy: true)
+            p.delegate = self; self.exportTemp = GameFiles.disk
+            self.present(p, animated: true)
+        })
+        a.addAction(UIAlertAction(title: "إلغاء", style: .cancel))
+        present(a, animated: true)
+    }
+    func exportGz() {
+        GameFiles.flush()
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("WindowsXP.img.gz")
+        try? FileManager.default.removeItem(at: out)
+        toast("جارِ ضغط القرص… 0%", 60000)
+        var lastPct = -1
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try DiskPack.gzip(GameFiles.disk, to: out) { f in
+                    let pct = Int(f * 100)
+                    if pct != lastPct { lastPct = pct; DispatchQueue.main.async { self.toast("جارِ ضغط القرص… \(pct)%", 60000) } }
+                }
+                DispatchQueue.main.async {
+                    self.toast("تم الضغط — اختر مكان الحفظ", 3000)
+                    let p = UIDocumentPickerViewController(forExporting: [out], asCopy: true)
+                    p.delegate = self; self.exportTemp = out
+                    self.present(p, animated: true)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: out)
+                DispatchQueue.main.async { self.toast("تعذّر الضغط: \((error as? GzError)?.msg ?? error.localizedDescription)", 6000) }
+            }
+        }
+    }
+    func finishExport(_ ok: Bool) {
+        if let t = exportTemp, t != GameFiles.disk { try? FileManager.default.removeItem(at: t) }
+        exportTemp = nil
+        toast(ok ? "✅ تم حفظ نسخة النظام في «الملفات»" : "أُلغي الاستخراج", 4000)
+    }
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        if exportTemp != nil { finishExport(true); return }
         web.evaluateJavaScript("window.lf2Progress && lf2Progress('جارِ نسخ القرص… (قد يأخذ دقيقة)', 0.5)")
         DispatchQueue.global(qos: .userInitiated).async {
             let err = self.preparer.importPicked(urls)
@@ -373,6 +565,7 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         }
     }
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        if exportTemp != nil { finishExport(false); return }
         web.evaluateJavaScript("window.lf2NeedSource && lf2NeedSource('')")
     }
 

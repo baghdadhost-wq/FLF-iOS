@@ -130,8 +130,9 @@ function prepare() {
 function fit() {
   const c = document.querySelector("#screen_container canvas");
   const box = $("screen_container");
-  let w = c && c.style.display !== "none" ? c.width : box.offsetWidth;
-  let h = c && c.style.display !== "none" ? c.height : box.offsetHeight;
+  // CSS size of the canvas (v86 shows 640-wide modes at double size)
+  let w = c && c.style.display !== "none" ? (c.offsetWidth || c.width) : box.offsetWidth;
+  let h = c && c.style.display !== "none" ? (c.offsetHeight || c.height) : box.offsetHeight;
   if (!w || !h) return;
   const s = Math.min(innerWidth / w, innerHeight / h);
   box.style.transform = `scale(${s}) translate(-50%, -50%)`;

@@ -87,12 +87,37 @@
   function click(btn) { buttons[btn] = true; sendButtons(); setTimeout(function () { buttons[btn] = false; sendButtons() }, 70) }
   var pdx = 0, pdy = 0
   function move(dx, dy) { pdx += dx; pdy += dy }
-  setInterval(function () {             // PS/2 mouse: small packets at a steady rate (bursts overflow it)
-    if (!EM || (!pdx && !pdy)) return
+  // queued packets (direct touch) go first, then trackpad movement; one small packet per tick
+  var Q = []
+  setInterval(function () {
+    if (!EM) return
+    for (var n = 0; n < 2 && Q.length; n++) {
+      var q = Q.shift()
+      if (typeof q === 'function') { q(); continue }
+      EM.bus.send('mouse-delta', [q[0], -q[1]])
+    }
+    if (Q.length || (!pdx && !pdy)) return
     var sx = Math.max(-60, Math.min(60, pdx)), sy = Math.max(-60, Math.min(60, pdy))
     pdx -= sx; pdy -= sy
     EM.bus.send('mouse-delta', [sx, -sy])
-  }, 20)
+  }, 12)
+
+  // ---------- direct touch: the pointer jumps to the finger ----------
+  // Needs Windows pointer speed 1:1 (Mouse > Pointer Options: middle speed, "Enhance pointer precision" off).
+  var direct = false
+  function guestPoint(x, y) {
+    var c = document.querySelector('#screen_container canvas'); if (!c) return null
+    var r = c.getBoundingClientRect(); if (!r.width) return null
+    return { x: Math.max(0, Math.min(c.width - 1, Math.round((x - r.left) / r.width * c.width))),
+             y: Math.max(0, Math.min(c.height - 1, Math.round((y - r.top) / r.height * c.height))) }
+  }
+  function moveTo(p, then) {
+    pdx = pdy = 0; Q.length = 0
+    for (var i = 0; i < 14; i++) Q.push([-120, -120])        // to the top-left corner
+    var x = p.x, y = p.y
+    while (x > 0 || y > 0) { var a = Math.min(60, x), b = Math.min(60, y); Q.push([a, b]); x -= a; y -= b }
+    if (then) Q.push(then)
+  }
   function speed() {
     var c = document.querySelector('#screen_container canvas')
     var shown = c ? c.getBoundingClientRect().width : innerWidth
@@ -105,6 +130,10 @@
       e.preventDefault()
       for (var i = 0; i < e.changedTouches.length; i++) { var t = e.changedTouches[i]; touches[t.identifier] = { x: t.clientX, y: t.clientY } }
       var n = Object.keys(touches).length
+      if (n === 1 && direct) {
+        var t0 = e.changedTouches[0], gp = guestPoint(t0.clientX, t0.clientY)
+        if (gp) moveTo(gp)
+      }
       if (n === 1) {
         start = Date.now(); moved = 0; maxFingers = 1
         clearTimeout(longT)
@@ -115,7 +144,7 @@
     }, { passive: false })
     pad.addEventListener('touchmove', function (e) {
       e.preventDefault()
-      var n = Object.keys(touches).length, k = speed()
+      var n = Object.keys(touches).length, k = direct ? speed() / 1.25 : speed()
       if (n >= 2) {                                // two fingers: scroll wheel
         var t = e.touches[0], y = t.clientY
         if (last2 !== null && Math.abs(y - last2) > 12) { if (EM) EM.bus.send('mouse-wheel', [y > last2 ? -1 : 1, 0]); last2 = y; moved += 20 }
@@ -137,7 +166,8 @@
       clearTimeout(longT)
       var quick = Date.now() - start < 260
       if (holding) { holding = false; if (!dragLock) { buttons[0] = false; sendButtons() } }
-      else if (quick && moved < 12) { if (maxFingers >= 2) click(2); else if (!dragLock) click(0) }
+      else if (direct && moved < 12 && maxFingers < 2) { if (!dragLock) Q.push(function () { click(0) }) }
+      else if (quick && moved < 12) { if (maxFingers >= 2) Q.length ? Q.push(function () { click(2) }) : click(2); else if (!dragLock) click(0) }
       last2 = null
     }
     pad.addEventListener('touchend', end, { passive: false })
@@ -212,11 +242,19 @@
     button('Alt+F4', function () { combo([0x38, 0x3E]) })
     button('Ctrl+Alt+Del', function () { combo([0x1D, 0x38, 0x153]) })
     button('🖱️ نقر يمين', function () { click(2) })
+    var bDirect = button('👆 لمس مباشر', function () {
+      direct = !direct; bDirect.classList.toggle('on', direct)
+      say(direct ? '👆 لمس مباشر: المؤشر يذهب لمكان إصبعك وتضغط هناك.<br><small>للدقة: Control Panel ← Mouse ← Pointer Options: السرعة في المنتصف وألغِ «Enhance pointer precision»</small>'
+                 : '🖐 وضع لوحة اللمس: حرّك إصبعك لتحريك المؤشر، ونقرة = ضغط', 6000)
+      try { localStorage.setItem('xp-direct', direct ? '1' : '0') } catch (e) {}
+    })
+    try { if (localStorage.getItem('xp-direct') === '1') { direct = true; bDirect.classList.add('on') } } catch (e) {}
     button('🌐 الشبكة', netPanel)
     button('🔁 الإقلاع', function () {
       var d = !window.__bootDisk; setBootFromDisk(d)
       say(d ? 'إعادة التشغيل القادمة: من القرص الصلب 💽' : 'إعادة التشغيل القادمة: من قرص CD 📀', 3500)
     })
+    button('📤 استخراج النظام', function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'export' }) } catch (e) {} })
     button('🗑 حذف القرص', function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'deletedisk' }) } catch (e) {} })
     button('✊ سحب', function (b) {
       dragLock = !dragLock; buttons[0] = dragLock; sendButtons(); b.classList.toggle('on', dragLock)
@@ -237,6 +275,12 @@
   }
   mount()
 
+  function unlockAudio() {
+    try { var ac = EM && EM.speaker_adapter && EM.speaker_adapter.audio_context; if (ac && ac.state !== 'running') ac.resume() } catch (e) {}
+  }
+  document.addEventListener('touchstart', unlockAudio, { capture: true, passive: true })
+  document.addEventListener('touchend', unlockAudio, { capture: true, passive: true })
+  window.winSay = function (t, ms) { say(t, ms) }
   window.winReady = function (emulator) {
     EM = emulator
     say('Windows يقلع الآن…<br>اسحب بإصبع لتحريك الماوس • انقر للنقر • إصبعان للنقر الأيمن • ضغطة مطوّلة للسحب', 8000)

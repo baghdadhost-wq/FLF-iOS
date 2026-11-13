@@ -30,7 +30,7 @@
   <div id="sub"></div>
   <div id="choose" style="display:none;flex-direction:column;gap:10px;align-items:center">
     <button class="src" id="src_iso">📀 تثبيت Windows XP من ملف ISO</button>
-    <button class="src" id="src_file">💽 عندي قرص XP جاهز (.img)</button>
+    <button class="src" id="src_file">💽 عندي قرص XP جاهز (.img أو .img.gz)</button>
     <div style="font-size:13px;color:#cfd6e4">حجم القرص الجديد:
       <select id="gb" style="font-size:14px"><option value="4">4 GB</option><option value="8" selected>8 GB</option><option value="16">16 GB</option></select>
       <span style="color:#93a0b8">(لا يأخذ مساحة إلا بقدر ما يُكتب فيه)</span></div>
@@ -122,8 +122,9 @@ function prepare() {
 function fit() {
   const c = document.querySelector("#screen_container canvas");
   const box = $("screen_container");
-  let w = c && c.style.display !== "none" ? c.width : box.offsetWidth;
-  let h = c && c.style.display !== "none" ? c.height : box.offsetHeight;
+  // CSS size of the canvas (v86 shows 640-wide modes at double size)
+  let w = c && c.style.display !== "none" ? (c.offsetWidth || c.width) : box.offsetWidth;
+  let h = c && c.style.display !== "none" ? (c.offsetHeight || c.height) : box.offsetHeight;
   if (!w || !h) return;
   const s = Math.min(innerWidth / w, innerHeight / h);
   box.style.transform = `scale(${s}) translate(-50%, -50%)`;

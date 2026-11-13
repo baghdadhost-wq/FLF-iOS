@@ -237,6 +237,11 @@
   }
   mount()
 
+  function unlockAudio() {
+    try { var ac = EM && EM.speaker_adapter && EM.speaker_adapter.audio_context; if (ac && ac.state !== 'running') ac.resume() } catch (e) {}
+  }
+  document.addEventListener('touchstart', unlockAudio, { capture: true, passive: true })
+  document.addEventListener('touchend', unlockAudio, { capture: true, passive: true })
   window.winReady = function (emulator) {
     EM = emulator
     say('Windows يقلع الآن…<br>اسحب بإصبع لتحريك الماوس • انقر للنقر • إصبعان للنقر الأيمن • ضغطة مطوّلة للسحب', 8000)
