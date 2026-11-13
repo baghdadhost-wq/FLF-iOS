@@ -141,4 +141,20 @@ patch('LF/character.js',
       "            } else { $.statemem.lostTU = 0 }\n"
       "            if ($.frame.N === 135) {",
       'FLF-iOS: release orphan catch', 1)
+# safety net: a fighter frozen in the air (same frame, same height) for 2 seconds is made to fall
+patch('LF/livingobject.js',
+      "      $.effect.timein--\n      if ($.effect.timein < 0 && $.effect.stuck) {\n        ; // stuck!\n      } else {\n        $.state_update('transit')\n      }",
+      "      $.effect.timein--\n      if ($.effect.timein < 0 && $.effect.stuck) {\n        ; // stuck!\n      } else {\n        $.state_update('transit')\n      }\n"
+      "      if ($.type === 'character' && $.health && $.health.hp > 0) { // FLF-iOS: air freeze guard\n"
+      "        if ($.ps.y < 0 && $.frame.N === $._hangN && Math.abs($.ps.y - $._hangY) < 0.5) {\n"
+      "          if (++$._hangT > 60) {\n"
+      "            $._hangT = 0\n"
+      "            $.effect.stuck = false; $.effect.timein = 0; $.effect.timeout = 0\n"
+      "            $.catching = null\n"
+      "            $.ps.vy = 1\n"
+      "            $.trans.frame($.data.frame[212] ? 212 : 0, 30)\n"
+      "          }\n"
+      "        } else { $._hangT = 0; $._hangN = $.frame.N; $._hangY = $.ps.y }\n"
+      "      }",
+      'FLF-iOS: air freeze guard', 1)
 print('engine patched')
