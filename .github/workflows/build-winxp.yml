@@ -1,0 +1,51 @@
+name: Build WinXP IPA
+
+on:
+  push:
+    branches: [main]
+    paths: ['winxp/**', '.github/workflows/build-winxp.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile app
+        run: |
+          APP=Payload/WinXP.app
+          mkdir -p "$APP"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos swiftc -parse-as-library -O \
+            -target arm64-apple-ios15.0 -sdk "$SDK" \
+            -framework UIKit -framework WebKit -framework AVFoundation \
+            winxp/App/main.swift -o "$APP/WinXP" 2>&1 | tee swiftc.log
+          if [ ! -f "$APP/WinXP" ]; then
+            grep -E "error:|Undefined|ld:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
+          cp winxp/App/Info.plist "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" "$APP/Info.plist"
+          cp winxp/App/AppIcon60x60@2x.png winxp/App/AppIcon60x60@3x.png "$APP/"
+          cp -R winxp/www "$APP/www"
+          plutil -lint "$APP/Info.plist"
+          file "$APP/WinXP"
+          zip -qry WinXP.ipa Payload
+          ls -lh WinXP.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinXP.ipa
+          path: WinXP.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="winxp-build-${{ github.run_number }}"
+          gh release create "$TAG" WinXP.ipa --title "Windows XP (v86) $TAG" \
+            --notes "Windows XP shell for v86 on LiveContainer: install from your own ISO or use your own .img disk. Changes are kept, CD-ROM (ISO), phone file transfer, internet through the phone." --latest=false

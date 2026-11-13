@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Windows XP</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #screen_container { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; line-height: 0; }
+  #screen_container > div { white-space: pre; font: 14px/1.1 monospace; color: #cfd6e4; }
+  #screen_container canvas { display: block; image-rendering: pixelated; }
+  #loader { position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; background: #0a0d14; color: #eaeef7; font-family: -apple-system, sans-serif;
+    text-align: center; padding: 20px; direction: rtl }
+  #loader.hidden { display: none }
+  .bar { width: min(420px, 80vw); height: 10px; border-radius: 9px; background: #1b2435; overflow: hidden; border: 1px solid #273349 }
+  .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ff5a3c, #ff8a3c); transition: width .2s }
+  #st { font-size: 15px } #sub { font-size: 12px; color: #93a0b8 }
+  .src { padding: 12px 20px; border-radius: 12px; border: 1px solid #ff8a3c; background: #1b2435; color: #fff; font-size: 16px; min-width: 300px }
+  #retry { display: none; padding: 10px 18px; border-radius: 10px; border: 0; background: #ff5a3c; color: #fff; font-size: 15px }
+</style>
+</head>
+<body>
+<div id="screen_container"><div></div><canvas></canvas></div>
+<div id="loader">
+  <div style="font-size:26px;font-weight:800">Windows XP</div>
+  <div id="st">جارِ التحضير…</div>
+  <div class="bar"><div id="bar"></div></div>
+  <div id="sub"></div>
+  <div id="choose" style="display:none;flex-direction:column;gap:10px;align-items:center">
+    <button class="src" id="src_iso">📀 تثبيت Windows XP من ملف ISO</button>
+    <button class="src" id="src_file">💽 عندي قرص XP جاهز (.img)</button>
+    <div style="font-size:13px;color:#cfd6e4">حجم القرص الجديد:
+      <select id="gb" style="font-size:14px"><option value="4">4 GB</option><option value="8" selected>8 GB</option><option value="16">16 GB</option></select>
+      <span style="color:#93a0b8">(لا يأخذ مساحة إلا بقدر ما يُكتب فيه)</span></div>
+    <div style="font-size:12px;color:#93a0b8;max-width:560px;line-height:1.6">
+      ملف Windows XP غير مضمّن — استخدم نسختك: ملف ISO للتثبيت، أو قرص جاهز بصيغة <span dir="ltr">.img</span> (raw).
+      التثبيت داخل المحاكي على الهاتف بطيء جداً (قد يأخذ عدة ساعات)، والأسرع أن تجهّز القرص على الكمبيوتر بـ QEMU ثم تنقله.
+    </div>
+    <input type="file" id="isofile" accept=".iso,application/x-iso9660-image,application/octet-stream" style="display:none">
+  </div>
+  <button id="retry">إعادة المحاولة</button>
+</div>
+<script>
+// Internet: v86 talks Wisp; this fake WebSocket hands the frames to the app, which opens real connections
+(function () {
+  function post(m) { try { webkit.messageHandlers.lf2.postMessage(m) } catch (e) {} }
+  function b64(u8) { var s = ""; for (var i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s) }
+  function unb64(s) { var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u }
+  var RealWS = window.WebSocket;
+  function NativeWS(url) { this.url = url; this.readyState = 1; this.binaryType = "arraybuffer"; window.__wispWS = this; post({ cmd: "wisp_open" }) }
+  NativeWS.prototype.send = function (d) { var u = d instanceof Uint8Array ? d : new Uint8Array(d); post({ cmd: "wisp", d: b64(u) }); window.__netBytes = (window.__netBytes || 0) + u.length };
+  NativeWS.prototype.close = function () {};
+  window.__wispRecv = function (arr) {
+    var ws = window.__wispWS; if (!ws || !ws.onmessage) return;
+    for (var i = 0; i < arr.length; i++) { try { var u = unb64(arr[i]); window.__netBytes = (window.__netBytes || 0) + u.length; ws.onmessage({ data: u.buffer }) } catch (e) {} }
+  };
+  window.WebSocket = function (url, p) { return String(url).indexOf("ws://native") === 0 ? new NativeWS(url) : new RealWS(url, p) };
+  // DNS-over-HTTPS requests from v86 are answered by the app
+  var realFetch = window.fetch.bind(window), did = 0, pend = {};
+  window.fetch = function (u, o) {
+    if (typeof u === "string" && /\/dns-query$/.test(u) && o && o.body) {
+      return new Promise(function (res) { var id = ++did; pend[id] = res; post({ cmd: "doh", id: id, d: b64(new Uint8Array(o.body.buffer || o.body, o.body.byteOffset || 0, o.body.byteLength)) }) });
+    }
+    return realFetch(u, o);
+  };
+  window.__dohDone = function (id, s) {
+    var r = pend[id]; delete pend[id]; if (!r) return;
+    var u = s ? unb64(s) : new Uint8Array(0);
+    r({ ok: !!s, arrayBuffer: function () { return Promise.resolve(u.buffer) } });
+  };
+  window.netEnabled = function () { return !window.__netOff };
+})();
+</script>
+<script>
+// every disk read gets its own URL so WebKit can never hand back a cached block from another offset
+(function(){var o=XMLHttpRequest.prototype.open,n=0;
+XMLHttpRequest.prototype.open=function(m,u){if(typeof u==="string"&&u.indexOf("disk/")>=0){u+=(u.indexOf("?")<0?"?":"&")+"r="+(++n);arguments[1]=u}return o.apply(this,arguments)}})();
+</script>
+<script src="libv86.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lf2;
+
+window.lf2Progress = (text, frac) => {
+  $("st").textContent = text;
+  if (frac != null) $("bar").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
+};
+window.lf2Error = (msg) => {
+  $("st").textContent = "خطأ: " + msg;
+  $("retry").style.display = "block";
+};
+$("retry").onclick = () => { $("retry").style.display = "none"; prepare(); };
+window.lf2NeedSource = (msg) => {
+  $("choose").style.display = "flex";
+  $("retry").style.display = "none";
+  $("st").textContent = msg ? msg : "لا يوجد قرص Windows XP بعد — اختر:";
+  $("bar").style.width = "0";
+};
+$("src_iso").onclick = () => $("isofile").click();
+$("isofile").onchange = () => {
+  const f = $("isofile").files[0]; if (!f) return;
+  window.__installISO = f;
+  $("choose").style.display = "none";
+  lf2Progress("جارِ إنشاء القرص…", 0.5);
+  bridge && bridge.postMessage({ cmd: "newdisk", gb: +$("gb").value });
+};
+window.xpNewDiskDone = (size) => window.lf2Ready(size);
+$("src_file").onclick = () => { $("choose").style.display = "none"; lf2Progress("اختر ملف القرص…", 0); bridge && bridge.postMessage({ cmd: "pick" }); };
+
+function prepare() {
+  lf2Progress("جارِ التحضير…", 0);
+  if (bridge) bridge.postMessage({ cmd: "prepare" });
+  else fetch("disk/xp.img", { method: "HEAD" })
+    .then((r) => lf2Ready(+r.headers.get("content-length")))
+    .catch((e) => lf2Error(e.message));
+}
+
+// fit the emulator screen to the phone
+function fit() {
+  const c = document.querySelector("#screen_container canvas");
+  const box = $("screen_container");
+  let w = c && c.style.display !== "none" ? c.width : box.offsetWidth;
+  let h = c && c.style.display !== "none" ? c.height : box.offsetHeight;
+  if (!w || !h) return;
+  const s = Math.min(innerWidth / w, innerHeight / h);
+  box.style.transform = `scale(${s}) translate(-50%, -50%)`;
+}
+setInterval(fit, 500);
+addEventListener("resize", fit);
+
+
+// Disk that keeps every change: reads come from the phone file, writes go back into it.
+// Written blocks stay in memory only until the app confirms they are on disk (XP writes gigabytes).
+function PersistDisk(url, size) {
+  this.url = url; this.byteLength = size;
+  this.written = new Map();            // 256-byte block -> [data, seq] not yet confirmed
+  this.seq = 0;
+  this.onload = this.onprogress = undefined;
+  const self = this;
+  window.__wAck = function (s) { for (const [k, v] of self.written) if (v[1] <= s) self.written.delete(k); };
+}
+PersistDisk.prototype.load = function () { this.onload && this.onload({}); };
+PersistDisk.prototype.get = function (start, len, cb) {
+  const first = Math.floor(start / 256), n = Math.ceil(len / 256), w = this.written;
+  let all = true;
+  for (let i = 0; i < n; i++) if (!w.has(first + i)) { all = false; break; }
+  const overlay = (out) => {
+    for (let i = 0; i < n; i++) { const b = w.get(first + i); if (b) out.set(b[0].subarray(0, Math.min(256, len - i * 256)), i * 256); }
+    cb(out);
+  };
+  if (all) return overlay(new Uint8Array(len));
+  const x = new XMLHttpRequest();
+  x.open("GET", this.url, true);
+  x.responseType = "arraybuffer";
+  x.setRequestHeader("Range", "bytes=" + start + "-" + (start + len - 1));
+  x.onload = () => {
+    const out = new Uint8Array(len);
+    out.set(new Uint8Array(x.response).subarray(0, len));
+    overlay(out);
+  };
+  x.onerror = () => setTimeout(() => this.get(start, len, cb), 500);
+  x.send();
+};
+PersistDisk.prototype.set = function (start, data, cb) {
+  const first = Math.floor(start / 256), seq = ++this.seq;
+  for (let i = 0; i * 256 < data.length; i++) {
+    const b = new Uint8Array(256);
+    b.set(data.subarray(i * 256, i * 256 + 256));
+    this.written.set(first + i, [b, seq]);
+  }
+  try {
+    let s = "";
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+    window.webkit.messageHandlers.lf2.postMessage({ cmd: "w", o: start, d: btoa(s), s: seq });
+  } catch (e) {}
+  cb();
+};
+PersistDisk.prototype.get_buffer = function (cb) { cb(); };
+PersistDisk.prototype.get_state = function () { return [[]]; };
+PersistDisk.prototype.set_state = function () {};
+
+window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
+  lf2Progress(window.__installISO ? "إقلاع من قرص التثبيت…" : "تشغيل Windows XP…", 1);
+  const emulator = window.emulator = new V86({
+    wasm_path: "v86.wasm",
+    memory_size: 256 * 1024 * 1024,
+    vga_memory_size: 16 * 1024 * 1024,
+    screen_container: $("screen_container"),
+    bios: { url: "seabios.bin" },
+    vga_bios: { url: "vgabios.bin" },
+    hda: new PersistDisk("disk/xp.img", diskSize),
+        cdrom: window.__installISO ? { buffer: window.__installISO, async: true } : undefined,
+    boot_order: window.__installISO ? 0x123 : 0x312,   // install: CD first, then the hard disk
+    // network card (NE2000) connected to the phone's internet through the app
+    net_device: netEnabled() ? { type: "ne2k", relay_url: "wisp://native/", dns_method: "doh" } : undefined,
+    autostart: true,
+    disable_keyboard: false,             // a Bluetooth keyboard also works; on-screen keyboard sends scancodes
+    disable_mouse: true,                 // mouse comes from the touch trackpad (win-ui.js)
+  });
+  emulator.add_listener("emulator-ready", () => {
+    setTimeout(function () { $("loader").classList.add("hidden") }, 1500);
+    fit();
+    if (window.winReady) window.winReady(emulator);
+  });
+  emulator.add_listener("screen-set-size", fit);
+};
+
+prepare();
+</script>
+<script src="isobuild.js"></script>
+<script src="win-ui.js"></script>
+</body>
+</html>
