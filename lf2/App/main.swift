@@ -26,7 +26,21 @@ enum GameFiles {
     static var disk: URL { dir.appendingPathComponent("windows95.img") }
     static var stateFile: URL { dir.appendingPathComponent(state) }
 
+    // full build: the unpacked disk and the saved state are shipped inside the app (folder "game")
+    static var bundleDir: URL { Bundle.main.resourceURL!.appendingPathComponent("game", isDirectory: true) }
+    static func bundled(_ name: String) -> URL? {
+        let u = bundleDir.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: u.path) ? u : nil
+    }
+    static func bundledReady() -> Bool {
+        guard let d = bundled("windows95.img"), bundled(state) != nil,
+              let a = try? FileManager.default.attributesOfItem(atPath: d.path),
+              (a[.size] as? NSNumber)?.int64Value == diskSize else { return false }
+        return true
+    }
+
     static func ready() -> Bool {
+        if bundledReady() { return true }
         let fm = FileManager.default
         guard let a = try? fm.attributesOfItem(atPath: disk.path),
               (a[.size] as? NSNumber)?.int64Value == diskSize,
@@ -276,7 +290,9 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
 
         let file: URL
         if path.hasPrefix("disk/") {
-            file = GameFiles.dir.appendingPathComponent(String(path.dropFirst(5)))
+            let name = String(path.dropFirst(5))
+            file = (GameFiles.bundledReady() ? GameFiles.bundled(name) : nil)
+                ?? GameFiles.dir.appendingPathComponent(name)
         } else {
             file = www.appendingPathComponent(path)
         }

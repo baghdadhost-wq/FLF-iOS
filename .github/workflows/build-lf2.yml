@@ -15,6 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get the full game (Windows 95 disk + saved state)
+        run: |
+          git clone --depth 1 https://github.com/Cludes/r-lf2-web.git src
+          (cd src && git lfs pull 2>/dev/null || true)
+          mkdir -p game
+          cat src/windows95.img.part1.gz src/windows95.img.part2.gz src/windows95.img.part3.gz | (gunzip -c > game/windows95.img || true)
+          cp src/win95-lf2-default.bin.zst game/
+          SIZE=$(stat -f%z game/windows95.img)
+          echo "disk size: $SIZE"
+          if [ "$SIZE" != "209715200" ]; then echo "::error::unexpected disk size $SIZE"; exit 1; fi
+          ls -lh game
+
       - name: Compile app
         run: |
           APP=Payload/LF2.app
@@ -32,9 +44,10 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" "$APP/Info.plist"
           cp lf2/App/AppIcon60x60@2x.png lf2/App/AppIcon60x60@3x.png "$APP/"
           cp -R lf2/www "$APP/www"
+          cp -R game "$APP/game"
           plutil -lint "$APP/Info.plist"
           file "$APP/LF2"
-          zip -qry LF2.ipa Payload
+          zip -qry -9 LF2.ipa Payload
           ls -lh LF2.ipa
 
       - uses: actions/upload-artifact@v4
@@ -48,4 +61,4 @@ jobs:
         run: |
           TAG="lf2-build-${{ github.run_number }}"
           gh release create "$TAG" LF2.ipa --title "LF2 original (v86) $TAG" \
-            --notes "Original Little Fighter 2 v1.9 (Windows 95 in v86) for LiveContainer. First launch downloads the game disk (~95 MB) once." --latest=false
+            --notes "Original Little Fighter 2 v1.9 (Windows 95 in v86) for LiveContainer. Full build: the game is inside the IPA, no download needed." --latest=false
