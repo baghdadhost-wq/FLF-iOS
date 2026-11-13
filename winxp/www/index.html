@@ -182,7 +182,18 @@ PersistDisk.prototype.get_buffer = function (cb) { cb(); };
 PersistDisk.prototype.get_state = function () { return [[]]; };
 PersistDisk.prototype.set_state = function () {};
 
+// change the BIOS boot order in CMOS (used on the next restart of the virtual machine)
+window.setBootFromDisk = function (disk) {
+  try {
+    const rtc = window.emulator.v86.cpu.devices.rtc, order = disk ? 0x312 : 0x123;
+    rtc.cmos_write(0x38, 1 | (order >> 4 & 0xF0));
+    rtc.cmos_write(0x3D, order & 0xFF);
+    window.__bootDisk = disk;
+  } catch (e) {}
+};
+
 window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
+  window.__bootDisk = !window.__installISO;
   lf2Progress(window.__installISO ? "إقلاع من قرص التثبيت…" : "تشغيل Windows XP…", 1);
   const emulator = window.emulator = new V86({
     wasm_path: "v86.wasm",
@@ -204,6 +215,9 @@ window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
     setTimeout(function () { $("loader").classList.add("hidden") }, 1500);
     fit();
     if (window.winReady) window.winReady(emulator);
+    // install: the CD is booted only once. Afterwards the BIOS boot order becomes hard disk first,
+    // so when setup restarts the machine it continues from the disk (the ISO stays in the drive).
+    if (window.__installISO) setTimeout(function () { setBootFromDisk(true) }, 25000);
   });
   emulator.add_listener("screen-set-size", fit);
 };

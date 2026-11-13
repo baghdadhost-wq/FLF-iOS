@@ -213,6 +213,10 @@
     button('Ctrl+Alt+Del', function () { combo([0x1D, 0x38, 0x153]) })
     button('🖱️ نقر يمين', function () { click(2) })
     button('🌐 الشبكة', netPanel)
+    button('🔁 الإقلاع', function () {
+      var d = !window.__bootDisk; setBootFromDisk(d)
+      say(d ? 'إعادة التشغيل القادمة: من القرص الصلب 💽' : 'إعادة التشغيل القادمة: من قرص CD 📀', 3500)
+    })
     button('🗑 حذف القرص', function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'deletedisk' }) } catch (e) {} })
     button('✊ سحب', function (b) {
       dragLock = !dragLock; buttons[0] = dragLock; sendButtons(); b.classList.toggle('on', dragLock)
