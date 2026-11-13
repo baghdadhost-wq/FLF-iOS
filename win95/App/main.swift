@@ -3,6 +3,7 @@ import WebKit
 import AVFoundation
 import Compression
 import UniformTypeIdentifiers
+import Network
 
 // MARK: - Game files kept on the phone (downloaded once)
 
@@ -438,11 +439,136 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
+
+// MARK: - Internet for Windows: a Wisp server inside the app (v86 NE2000 -> phone network)
+
+final class WispBridge {
+    weak var web: WKWebView?
+    private let q = DispatchQueue(label: "wisp")
+    private var conns: [UInt32: NWConnection] = [:]
+    private var got: [UInt32: Int] = [:]
+    private var out: [String] = []
+    private var flushing = false
+    private let window: UInt32 = 128
+
+    private func frame(_ type: UInt8, _ id: UInt32, _ payload: Data) -> Data {
+        var d = Data([type, UInt8(id & 0xff), UInt8(id >> 8 & 0xff), UInt8(id >> 16 & 0xff), UInt8(id >> 24 & 0xff)])
+        d.append(payload); return d
+    }
+    private func u32(_ v: UInt32) -> Data { Data([UInt8(v & 0xff), UInt8(v >> 8 & 0xff), UInt8(v >> 16 & 0xff), UInt8(v >> 24 & 0xff)]) }
+
+    private func emit(_ d: Data) {
+        out.append(d.base64EncodedString())
+        if flushing { return }
+        flushing = true
+        q.asyncAfter(deadline: .now() + 0.004) {
+            let batch = self.out; self.out = []; self.flushing = false
+            let js = "window.__wispRecv && __wispRecv([\"" + batch.joined(separator: "\",\"") + "\"])"
+            DispatchQueue.main.async { self.web?.evaluateJavaScript(js) }
+        }
+    }
+
+    func open() {
+        q.async {
+            self.conns.values.forEach { $0.cancel() }
+            self.conns = [:]; self.got = [:]
+            self.emit(self.frame(3, 0, self.u32(self.window)))
+        }
+    }
+
+    func incoming(_ b64: String) {
+        guard let d = Data(base64Encoded: b64), d.count >= 5 else { return }
+        q.async { self.handle([UInt8](d)) }
+    }
+
+    private func close(_ id: UInt32, reason: UInt8) {
+        guard let c = conns.removeValue(forKey: id) else { return }
+        got[id] = nil
+        c.cancel()
+        emit(frame(4, id, Data([reason])))
+    }
+
+    private func handle(_ b: [UInt8]) {
+        let id = UInt32(b[1]) | UInt32(b[2]) << 8 | UInt32(b[3]) << 16 | UInt32(b[4]) << 24
+        switch b[0] {
+        case 1: // CONNECT
+            guard b.count >= 8 else { return }
+            let udp = b[5] == 2
+            let port = UInt16(b[6]) | UInt16(b[7]) << 8
+            let host = String(decoding: b[8...], as: UTF8.self)
+            guard let p = NWEndpoint.Port(rawValue: port), !host.isEmpty else {
+                emit(frame(4, id, Data([0x42]))); return
+            }
+            let c = NWConnection(host: NWEndpoint.Host(host), port: p, using: udp ? .udp : .tcp)
+            conns[id] = c; got[id] = 0
+            c.stateUpdateHandler = { [weak self] st in
+                guard let self = self else { return }
+                switch st {
+                case .ready: self.receive(id, c, udp: udp)
+                case .failed: self.close(id, reason: 0x44)
+                case .waiting: self.close(id, reason: 0x44)
+                case .cancelled: self.close(id, reason: 0x02)
+                default: break
+                }
+            }
+            c.start(queue: q)
+        case 2: // DATA
+            guard let c = conns[id] else { return }
+            c.send(content: Data(b[5...]), completion: .contentProcessed { _ in })
+            let n = (got[id] ?? 0) + 1
+            got[id] = n
+            if n % 64 == 0 { emit(frame(3, id, u32(window))) }
+        case 4: // CLOSE from Windows
+            if let c = conns.removeValue(forKey: id) { got[id] = nil; c.cancel() }
+        default: break
+        }
+    }
+
+    private func receive(_ id: UInt32, _ c: NWConnection, udp: Bool) {
+        if udp {
+            c.receiveMessage { [weak self] data, _, _, err in
+                guard let self = self, self.conns[id] != nil else { return }
+                if let d = data, !d.isEmpty { self.emit(self.frame(2, id, d)) }
+                if err != nil { self.close(id, reason: 0x02) } else { self.receive(id, c, udp: true) }
+            }
+            return
+        }
+        c.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, done, err in
+            guard let self = self, self.conns[id] != nil else { return }
+            if let d = data, !d.isEmpty { self.emit(self.frame(2, id, d)) }
+            if done || err != nil { self.close(id, reason: 0x02) } else { self.receive(id, c, udp: false) }
+        }
+    }
+
+    // DNS for Windows (v86 asks DNS-over-HTTPS; done here so the page needs no CORS)
+    func dns(id: Int, query b64: String) {
+        guard let q = Data(base64Encoded: b64) else { return }
+        let servers = ["https://cloudflare-dns.com/dns-query", "https://dns.google/dns-query"]
+        func ask(_ i: Int) {
+            guard i < servers.count, let u = URL(string: servers[i]) else { answer(nil); return }
+            var r = URLRequest(url: u, timeoutInterval: 8)
+            r.httpMethod = "POST"
+            r.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
+            r.setValue("application/dns-message", forHTTPHeaderField: "Accept")
+            r.httpBody = q
+            URLSession.shared.dataTask(with: r) { d, resp, _ in
+                if let d = d, (resp as? HTTPURLResponse)?.statusCode == 200, !d.isEmpty { answer(d) } else { ask(i + 1) }
+            }.resume()
+        }
+        func answer(_ d: Data?) {
+            let s = d.map { "\"" + $0.base64EncodedString() + "\"" } ?? "null"
+            DispatchQueue.main.async { self.web?.evaluateJavaScript("window.__dohDone && __dohDone(\(id), \(s))") }
+        }
+        ask(0)
+    }
+}
+
 // MARK: - UI
 
 final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDelegate, UIDocumentPickerDelegate {
     var web: WKWebView!
     let preparer = Preparer()
+    let wisp = WispBridge()
 
     override func loadView() {
         let cfg = WKWebViewConfiguration()
@@ -477,7 +603,7 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
                 let e = err.replacingOccurrences(of: "\"", with: "'")
                 self?.web.evaluateJavaScript("window.lf2Error && lf2Error(\"\(e)\")")
             } else {
-                self?.web.evaluateJavaScript("window.lf2Ready && lf2Ready(\(GameFiles.diskSize))")
+                self?.web.evaluateJavaScript("window.__netOff = \(UserDefaults.standard.bool(forKey: "netOff")); window.lf2Ready && lf2Ready(\(GameFiles.diskSize))")
             }
         }
         web.load(URLRequest(url: URL(string: "lf2://app/index.html")!))
@@ -488,6 +614,14 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         if cmd == "prepare" { DispatchQueue.main.async { self.preparer.run() } }
         if cmd == "download" { DispatchQueue.main.async { self.preparer.startDownload() } }
         if cmd == "pick" { DispatchQueue.main.async { self.pickFiles() } }
+        if cmd == "net", let on = body["on"] as? Bool {
+            UserDefaults.standard.set(!on, forKey: "netOff")
+            GameFiles.flush()
+            web.reload()
+        }
+        if cmd == "wisp_open" { wisp.web = web; wisp.open() }
+        if cmd == "wisp", let d = body["d"] as? String { wisp.incoming(d) }
+        if cmd == "doh", let id = body["id"] as? NSNumber, let d = body["d"] as? String { wisp.web = web; wisp.dns(id: id.intValue, query: d) }
         if cmd == "w", let o = body["o"] as? NSNumber, let d = body["d"] as? String, let data = Data(base64Encoded: d) {
             GameFiles.write(offset: o.uint64Value, data: data)
         }

@@ -184,6 +184,28 @@
     } else b.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); fn(b) })
     return b
   }
+  function netPanel() {
+    var old = document.getElementById('wnet'); if (old) { old.remove(); return }
+    var on = window.netEnabled ? netEnabled() : true
+    var p = el('div', { id: 'wnet' }, document.body)
+    p.style.cssText = 'position:fixed;inset:6% 8%;z-index:99999;background:#c0c0c0;color:#000;border:2px outset #fff;font:13px Tahoma,sans-serif;direction:rtl;overflow:auto;padding:10px 14px;-webkit-user-select:text'
+    p.innerHTML = '<b>🌐 الإنترنت داخل Windows (عبر شبكة الهاتف)</b><span id=wnetx style="float:left;cursor:pointer;font-weight:bold;padding:0 6px">✕</span>' +
+      '<p>الحالة: <b>' + (on ? 'كرت الشبكة موصول ✓' : 'مطفأة') + '</b> — البيانات المتبادلة: <span id=wnetb>0</span> KB</p>' +
+      '<p><b>مرة واحدة فقط — تثبيت تعريف الشبكة:</b> Windows يحتاج ملفات من قرص Windows 95 الأصلي (OSR2) لأنها غير موجودة على القرص.</p>' +
+      '<ol style="padding-right:18px;margin:4px 0">' +
+      '<li>اضغط 💿 ISO واختر ملف قرص <b>Windows 95 OSR2</b> (ملف .iso).</li>' +
+      '<li>إذا ظهرت نافذة <b>New Hardware Found / PCI Ethernet Controller</b> اختر <b>Driver from list</b> ← <b>Network adapters</b> ← <b>Novell/Anthem</b> ← <b>NE2000 Compatible</b>.<br>وإن لم تظهر: ابدأ ← Settings ← Control Panel ← Network ← Add ← Adapter ← نفس الاختيار.</li>' +
+      '<li>تأكد أن <b>TCP/IP</b> موجود في القائمة (Add ← Protocol ← Microsoft ← TCP/IP) وإعداده <b>Obtain an IP address automatically</b>.</li>' +
+      '<li>عندما يطلب القرص اكتب المسار <b>D:\\WIN95</b> ثم أعد تشغيل Windows.</li></ol>' +
+      '<p>بعدها كل برنامج يستخدم الإنترنت يعمل عبر شبكة الهاتف (Wi-Fi أو بيانات). المتصفح القديم يفتح مواقع <b>http</b> البسيطة فقط، مثل: http://frogfind.com و http://68k.news و http://theoldnet.com</p>' +
+      '<p><button id=wnett style="font:inherit;padding:4px 10px">' + (on ? 'إطفاء كرت الشبكة' : 'تشغيل كرت الشبكة') + '</button> (يتطلّب إعادة تشغيل Windows)</p>'
+    document.getElementById('wnetx').onclick = function () { p.remove() }
+    document.getElementById('wnett').onclick = function () {
+      p.remove(); say(on ? 'جارِ إطفاء كرت الشبكة وإعادة تشغيل Windows…' : 'جارِ تشغيل كرت الشبكة وإعادة تشغيل Windows…', 4000)
+      setTimeout(function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'net', on: !on }) } catch (e) {} }, 1200)
+    }
+    var t = setInterval(function () { var b = document.getElementById('wnetb'); if (!b) return clearInterval(t); b.textContent = Math.round((window.__netBytes || 0) / 1024) }, 1000)
+  }
   function buildBar() {
     var tog = button('☰', function () { root.classList.toggle('min') }); tog.id = 'wtog'
     btnKb = button('⌨ لوحة المفاتيح', function (b) { var o = kb.style.display !== 'block'; kb.style.display = o ? 'block' : 'none'; b.classList.toggle('on', o) })
@@ -194,6 +216,7 @@
     button('Alt+F4', function () { combo([0x38, 0x3E]) })
     button('Ctrl+Alt+Del', function () { combo([0x1D, 0x38, 0x153]) })
     button('🖱️ نقر يمين', function () { click(2) })
+    button('🌐 الشبكة', netPanel)
     button('♻ استعادة الأصل', function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'factory' }) } catch (e) {} })
     button('✊ سحب', function (b) {
       dragLock = !dragLock; buttons[0] = dragLock; sendButtons(); b.classList.toggle('on', dragLock)

@@ -39,6 +39,37 @@
   <button id="retry">إعادة المحاولة</button>
 </div>
 <script>
+// Internet: v86 talks Wisp; this fake WebSocket hands the frames to the app, which opens real connections
+(function () {
+  function post(m) { try { webkit.messageHandlers.lf2.postMessage(m) } catch (e) {} }
+  function b64(u8) { var s = ""; for (var i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s) }
+  function unb64(s) { var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u }
+  var RealWS = window.WebSocket;
+  function NativeWS(url) { this.url = url; this.readyState = 1; this.binaryType = "arraybuffer"; window.__wispWS = this; post({ cmd: "wisp_open" }) }
+  NativeWS.prototype.send = function (d) { var u = d instanceof Uint8Array ? d : new Uint8Array(d); post({ cmd: "wisp", d: b64(u) }); window.__netBytes = (window.__netBytes || 0) + u.length };
+  NativeWS.prototype.close = function () {};
+  window.__wispRecv = function (arr) {
+    var ws = window.__wispWS; if (!ws || !ws.onmessage) return;
+    for (var i = 0; i < arr.length; i++) { try { var u = unb64(arr[i]); window.__netBytes = (window.__netBytes || 0) + u.length; ws.onmessage({ data: u.buffer }) } catch (e) {} }
+  };
+  window.WebSocket = function (url, p) { return String(url).indexOf("ws://native") === 0 ? new NativeWS(url) : new RealWS(url, p) };
+  // DNS-over-HTTPS requests from v86 are answered by the app
+  var realFetch = window.fetch.bind(window), did = 0, pend = {};
+  window.fetch = function (u, o) {
+    if (typeof u === "string" && /\/dns-query$/.test(u) && o && o.body) {
+      return new Promise(function (res) { var id = ++did; pend[id] = res; post({ cmd: "doh", id: id, d: b64(new Uint8Array(o.body.buffer || o.body, o.body.byteOffset || 0, o.body.byteLength)) }) });
+    }
+    return realFetch(u, o);
+  };
+  window.__dohDone = function (id, s) {
+    var r = pend[id]; delete pend[id]; if (!r) return;
+    var u = s ? unb64(s) : new Uint8Array(0);
+    r({ ok: !!s, arrayBuffer: function () { return Promise.resolve(u.buffer) } });
+  };
+  window.netEnabled = function () { return !window.__netOff };
+})();
+</script>
+<script>
 // every disk read gets its own URL so WebKit can never hand back a cached block from another offset
 (function(){var o=XMLHttpRequest.prototype.open,n=0;
 XMLHttpRequest.prototype.open=function(m,u){if(typeof u==="string"&&u.indexOf("disk/")>=0){u+=(u.indexOf("?")<0?"?":"&")+"r="+(++n);arguments[1]=u}return o.apply(this,arguments)}})();
@@ -167,6 +198,8 @@ window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
     hda: diskBuffer ? { buffer: diskBuffer, async: true } : new PersistDisk("disk/windows95.img", diskSize),
     // full boot (no snapshot): the old snapshot has no CD drive, a fresh boot detects one on the 2nd IDE channel
     cdrom: undefined,
+    // network card (NE2000) connected to the phone's internet through the app
+    net_device: netEnabled() ? { type: "ne2k", relay_url: "wisp://native/", dns_method: "doh" } : undefined,
     autostart: true,
     disable_keyboard: false,             // a Bluetooth keyboard also works; on-screen keyboard sends scancodes
     disable_mouse: true,                 // mouse comes from the touch trackpad (win-ui.js)
