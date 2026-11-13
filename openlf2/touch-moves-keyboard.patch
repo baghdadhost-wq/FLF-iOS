@@ -1,0 +1,356 @@
+diff --git a/include/openlf2/ports/platform.hpp b/include/openlf2/ports/platform.hpp
+index fae4a8a..f691a0f 100644
+--- a/include/openlf2/ports/platform.hpp
++++ b/include/openlf2/ports/platform.hpp
+@@ -223,6 +223,8 @@ public:
+     // Shows or hides the on-screen keyboard where the system has one; `text` of the snapshot
+     // only carries typing while it is active.
+     virtual void set_text_input(bool active) = 0;
++    // OpenLF2 iOS build: shows the on-screen keyboard with its keys going to the game as key presses.
++    virtual void set_game_keyboard(bool) {}
+     // Applies the scaling mode without recreating the window. A mode the renderer cannot do
+     // (`supports` is false) is replaced by `nearest`.
+     virtual Result<void> set_render_filter(RenderFilter filter) = 0;
+diff --git a/include/openlf2/ports/scripts.hpp b/include/openlf2/ports/scripts.hpp
+index 9dccf64..930010a 100644
+--- a/include/openlf2/ports/scripts.hpp
++++ b/include/openlf2/ports/scripts.hpp
+@@ -54,7 +54,7 @@ public:
+ struct ScriptFrame {
+     Viewport viewport;
+     bool waiting = false;
+-    std::optional<bool> fast, text_input, fullscreen, replay_drop, smooth_motion;
++    std::optional<bool> fast, text_input, fullscreen, replay_drop, smooth_motion, game_keyboard;
+     std::optional<RenderFilter> render_filter;
+     std::vector<DrawCommand> commands;
+     std::vector<MotionGroup> motion; // ranges of `commands` that move together, see MotionGroup
+diff --git a/scripts/base/game/control.lua b/scripts/base/game/control.lua
+index e9f79a9..a13efc5 100644
+--- a/scripts/base/game/control.lua
++++ b/scripts/base/game/control.lua
+@@ -105,6 +105,20 @@ function control.chord_available(value, chord)
+     end
+     return chord == "daj" and value.twin == fusion_merged
+ end
++-- OpenLF2 iOS build: whether one Defend sequence ("Fa", "Ua", "Da", "Fj", "Uj", "Dj", "ja") could start a
++-- move for `value`'s fighter now; the touch "moves" panel enables its buttons from this.
++function control.move_available(value, field)
++    if not value or not value.record then return false end
++    local frame = value.record.frame(value.frame)
++    local candidates = {frame.hits}
++    if frame.hits.d ~= 0 then candidates[2] = value.record.frame(frame.hits.d).hits end
++    for _, hits in ipairs(candidates) do
++        if hits[field] ~= 0 and value.weapon ~= record_kinds.heavy_item and (field ~= "ja" or value.transform == -1) then return true end
++    end
++    return field == "ja" and value.twin == fusion_merged
++end
++-- Whether `value`'s fighter faces left.
++function control.faces_left(value) return value ~= nil and value.facing == facing_left end
+ local completed_sequence = constants.combo_states.complete
+ local function recognize(match, value, index)
+     local spec = sequences[index]
+diff --git a/scripts/base/ui/flow.lua b/scripts/base/ui/flow.lua
+index 2419329..cd8ff35 100644
+--- a/scripts/base/ui/flow.lua
++++ b/scripts/base/ui/flow.lua
+@@ -294,6 +294,10 @@ function flow.draw(state, context)
+         state.touch_gamepad.fast_on = speed.fast
+         touch_gamepad.draw(state.touch_gamepad, context)
+     end
++    -- OpenLF2 iOS build: the KB button shows the system keyboard; its keys go straight to the game.
++    if context.game_keyboard then
++        context.game_keyboard(gamepad_mode(state) ~= nil and state.touch_gamepad.keyboard_on == true)
++    end
+     local status = recording.status_text()
+     if status then font.gdi(context, i18n.clip(status, 128), 3, 0x213, recording.status_color())
+     elseif state.volume_text then font.gdi(context, state.volume_text, 3, 0x213, 0x00ff00) end
+@@ -381,6 +385,9 @@ function flow.update(state, raw, context)
+     local available = {}
+     for _, chord in ipairs({"da", "dj", "daj"}) do available[chord] = control.chord_available(fighter, chord) end
+     touch_gamepad.set_available(state.touch_gamepad, available)
++    local move_available = {}
++    for _, field in ipairs({"Fa", "Ua", "Da", "ja", "Fj", "Uj", "Dj"}) do move_available[field] = control.move_available(fighter, field) end
++    touch_gamepad.set_moves(state.touch_gamepad, move_available, control.faces_left(fighter))
+     local touched, pause_held, fast_held = touch_gamepad.update(state.touch_gamepad,
+         active_screen and gamepad_input or {touch_active = false, screen = input.screen}, mode)
+     -- The pause button is F1; the match toggles on its press.
+diff --git a/scripts/base/ui/touch_gamepad.lua b/scripts/base/ui/touch_gamepad.lua
+index 78864fc..2b0d694 100644
+--- a/scripts/base/ui/touch_gamepad.lua
++++ b/scripts/base/ui/touch_gamepad.lua
+@@ -57,6 +57,30 @@ local function build_buttons(layout, screen)
+     for _, button_action in ipairs(chords) do list[#list + 1] = button(button_action, nil, chord_fill, chord_pressed) end
+     return list
+ end
++-- OpenLF2 iOS build: the "moves" panel. Each button plays a whole Defend sequence (D, direction, Attack/Jump)
++-- for player 1, so the special moves of any character are one tap. ">" is the way the fighter faces.
++local moves = {
++    {field = "Fa", label = "D>A", right = 60, bottom = 80}, {field = "Ua", label = "D^A", right = 60, bottom = 140},
++    {field = "Da", label = "DvA", right = 60, bottom = 200}, {field = "ja", label = "DJA", right = 60, bottom = 260},
++    {field = "Fj", label = "D>J", right = 118, bottom = 262}, {field = "Uj", label = "D^J", right = 118, bottom = 322},
++    {field = "Dj", label = "DvJ", right = 118, bottom = 382},
++}
++local move_fill, move_pressed = {95, 60, 30}, {200, 130, 60}
++local function build_moves(screen)
++    local list = {}
++    for _, move in ipairs(moves) do
++        list[#list + 1] = {action = "move", field = move.field, label = move.label, x = screen.right - move.right,
++            y = screen.bottom - move.bottom, radius = 24, fill = move_fill, pressed = move_pressed}
++    end
++    return list
++end
++-- Two frames per step: input is only re-read every other frame.
++local function move_steps(field, faces_left)
++    local first, last = field:sub(1, 1), field:sub(2, 2)
++    local direction = ({F = faces_left and "l" or "r", U = "u", D = "d", j = "b"})[first]
++    local action = last == "a" and "c" or "b"
++    return {"f", "f", "", "", direction, direction, "", "", action, action, "", ""}
++end
+ local outline = {18, 18, 22}
+ local disabled_fill = {34, 34, 38}
+ 
+@@ -83,6 +107,9 @@ local function fit(state, screen)
+     state.fast = {x = screen.left + math.floor(fast.left), y = screen.top + math.floor(fast.top),
+         radius = math.floor(fast.radius)}
+     state.buttons = build_buttons(state.layout, screen)
++    state.move_buttons = build_moves(screen)
++    state.keyboard_toggle = {x = screen.left + 76, y = screen.top + 30, radius = 18, label = "KB"}
++    state.moves_toggle = {x = screen.left + 124, y = screen.top + 30, radius = 18, label = "MV"}
+     if not state.finger then
+         state.base_x, state.base_y = state.stick.default_x, state.stick.default_y
+         state.knob_x, state.knob_y = state.base_x, state.base_y
+@@ -100,6 +127,17 @@ local function inside_zone(zone, x, y) return x >= zone.left and x <= zone.right
+ 
+ -- Which chord buttons ("da", "dj", "daj") are enabled; the others cannot be pressed.
+ function gamepad.set_available(state, available) state.available = available end
++-- OpenLF2 iOS build: which "moves" fields player 1's fighter can do now, and where it faces.
++function gamepad.set_moves(state, available, faces_left) state.moves_available, state.faces_left = available, faces_left end
++-- The buttons shown on the right: the chord buttons, or the moves panel when it is on.
++local function right_buttons(state)
++    local list = {}
++    for _, button in ipairs(state.buttons) do
++        if not (state.moves_on and button.letters) then list[#list + 1] = button end
++    end
++    if state.moves_on then for _, button in ipairs(state.move_buttons) do list[#list + 1] = button end end
++    return list
++end
+ 
+ -- state: from `create`. input: the frame's input; pass touch_active=false to release the held
+ -- finger and hide (paused/replaying/other screens).
+@@ -112,8 +150,10 @@ local function target_at(state, touch, mode)
+         if gap <= state.tolerance and (not best_gap or gap < best_gap) then best, best_gap = target, gap end
+     end
+     if mode ~= "full" then consider(state.pause); consider(state.fast) end
++    consider(state.keyboard_toggle)
+     if mode ~= "pause" then
+-        for _, button in ipairs(state.buttons) do consider(button) end
++        consider(state.moves_toggle)
++        for _, button in ipairs(right_buttons(state)) do consider(button) end
+     end
+     return best
+ end
+@@ -129,7 +169,7 @@ function gamepad.update(state, input, mode)
+     local screen = state.screen
+     state.visible = input.touch_active == true
+     if not state.visible then
+-        state.finger, state.held = nil, {}
++        state.finger, state.held, state.macro = nil, {}, nil
+         state.base_x, state.base_y = stick.default_x, stick.default_y
+         state.knob_x, state.knob_y = stick.default_x, stick.default_y
+         return "", false, false
+@@ -140,6 +180,11 @@ function gamepad.update(state, input, mode)
+         local target = target_at(state, touch, mode)
+         if target then pressed[target] = true end
+     end
++    -- KB / MV toggles flip on a new press.
++    local keyboard_held, moves_held = pressed[state.keyboard_toggle] == true, pressed[state.moves_toggle] == true
++    if keyboard_held and not state.keyboard_was_held then state.keyboard_on = not state.keyboard_on end
++    if moves_held and not state.moves_was_held then state.moves_on = not state.moves_on end
++    state.keyboard_was_held, state.moves_was_held = keyboard_held, moves_held
+     local pause_held = pressed[state.pause] == true
+     local fast_held = pressed[state.fast] == true
+     state.pause_held, state.fast_held, state.mode = pause_held, fast_held, mode
+@@ -206,12 +251,29 @@ function gamepad.update(state, input, mode)
+ 
+     -- Any finger on a button holds it; multiple fingers can hold multiple buttons plus the stick.
+     -- A disabled chord still catches fingers near it but does nothing.
+-    for _, button in ipairs(buttons) do
+-        if pressed[button] and (not button.letters or state.available[button.action]) then
++    local pressed_moves = {}
++    for _, button in ipairs(right_buttons(state)) do
++        if button.action == "move" then
++            if pressed[button] then
++                pressed_moves[button] = true
++                if not (state.moves_held or {})[button] and not state.macro and (state.moves_available or {})[button.field] then
++                    state.macro, state.macro_step = move_steps(button.field, state.faces_left), 1
++                end
++            end
++        elseif pressed[button] and (not button.letters or state.available[button.action]) then
+             held[button.action] = true
+             for _, letter in ipairs(button.letters or {}) do held[letter] = true end
+         end
+     end
++    state.moves_held = pressed_moves
++    if state.macro then
++        -- A playing move sequence replaces the buttons and the stick for its few frames.
++        held = {}
++        local step = state.macro[state.macro_step]
++        if step ~= "" then held[step] = true end
++        state.macro_step = state.macro_step + 1
++        if state.macro_step > #state.macro then state.macro = nil end
++    end
+     state.held = held
+     local letters = {}
+     for _, letter in ipairs({"u", "d", "l", "r", "c", "b", "f"}) do
+@@ -304,6 +366,15 @@ function gamepad.draw(state, context)
+         draw_pause(state, button_context)
+         draw_fast(state, button_context)
+     end
++    local function draw_toggle(toggle, on, show)
++        if not show then return end
++        local color = on and {50, 120, 70} or {60, 60, 68}
++        disc(button_context, toggle.x, toggle.y, toggle.radius, outline[1], outline[2], outline[3])
++        disc(button_context, toggle.x, toggle.y, toggle.radius - 3, color[1], color[2], color[3])
++        font.draw(context, toggle.label, toggle.x, toggle.y - 8, nil, nil, "center")
++    end
++    draw_toggle(state.keyboard_toggle, state.keyboard_on, true)
++    draw_toggle(state.moves_toggle, state.moves_on, state.mode ~= "pause")
+     if state.mode == "pause" then
+         context.overlay(false)
+         return
+@@ -322,9 +393,12 @@ function gamepad.draw(state, context)
+         disc(stick_context, state.knob_x, state.knob_y, stick.knob, outline[1], outline[2], outline[3])
+         disc(stick_context, state.knob_x, state.knob_y, stick.knob_inner, knob_color[1], knob_color[2], knob_color[3])
+     end
+-    for _, button in ipairs(buttons) do
+-        local disabled = button.letters and not state.available[button.action]
+-        local color = disabled and disabled_fill or (state.held[button.action] and button.pressed) or button.fill
++    for _, button in ipairs(right_buttons(state)) do
++        local disabled
++        if button.action == "move" then disabled = not (state.moves_available or {})[button.field]
++        else disabled = button.letters and not state.available[button.action] end
++        local lit = button.action == "move" and (state.moves_held or {})[button] or state.held[button.action]
++        local color = disabled and disabled_fill or (lit and button.pressed) or button.fill
+         disc(button_context, button.x, button.y, button.radius, outline[1], outline[2], outline[3])
+         disc(button_context, button.x, button.y, button.radius - 6, color[1], color[2], color[3])
+         font.draw(context, button.label, button.x, button.y - 8, nil, disabled and 0x606060 or nil, "center")
+diff --git a/scripts/runtime/bootstrap.lua b/scripts/runtime/bootstrap.lua
+index 7819dc1..47f3db4 100644
+--- a/scripts/runtime/bootstrap.lua
++++ b/scripts/runtime/bootstrap.lua
+@@ -109,7 +109,7 @@ local FrameOpcode = {
+     clip = 6, sound = 7, rumble = 8, music = 9, speed = 10,
+     render_filter = 11, text_input = 12, replay_drop = 13, fullscreen = 14, action = 15, text = 16, file_dialog = 17, world_sprite = 18,
+ 
+-    motion_begin = 19, motion_end = 20, smooth_motion = 21,
++    motion_begin = 19, motion_end = 20, smooth_motion = 21, game_keyboard = 22,
+ }
+ local RumbleTarget = {gamepad = 0, phone = 1}
+ local MusicKind = {play = 0, stop = 1, resume = 2, volume = 3}
+@@ -177,6 +177,7 @@ local function render(input)
+         command(FrameOpcode.render_filter, RenderFilter[filter] or INVALID_ENUM)
+     end
+     function context.text_input(active) command(FrameOpcode.text_input, active) end
++    function context.game_keyboard(active) command(FrameOpcode.game_keyboard, active) end
+     function context.replay_drop(active) command(FrameOpcode.replay_drop, active) end
+     function context.fullscreen(active) command(FrameOpcode.fullscreen, active) end
+     -- Smooth motion (OpenLF2 extension): the host may show pictures between two frames, moving every motion group.
+diff --git a/src/adapters/luajit/runtime.cpp b/src/adapters/luajit/runtime.cpp
+index 0a3b77f..3a0b1e5 100644
+--- a/src/adapters/luajit/runtime.cpp
++++ b/src/adapters/luajit/runtime.cpp
+@@ -187,7 +187,7 @@ int create_bridge_slot(lua_State* state) {
+ enum class FrameOpcode {
+     viewport = 1, sprite, fill, overlay, render_area, clip, sound, rumble,
+     music, speed, render_filter, text_input, replay_drop, fullscreen, action, text, file_dialog, world_sprite,
+-    motion_begin, motion_end, smooth_motion
++    motion_begin, motion_end, smooth_motion, game_keyboard
+ };
+ class FrameReader {
+ public:
+@@ -265,7 +265,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+             group.reset();
+         };
+         while (reader.remaining()) {
+-            const auto opcode = static_cast<FrameOpcode>(reader.integer(1, 21));
++            const auto opcode = static_cast<FrameOpcode>(reader.integer(1, 22));
+             const bool grouping = opcode == FrameOpcode::motion_begin || opcode == FrameOpcode::motion_end;
+             if (!grouping && ++commands > 4096) throw std::runtime_error("too many frame commands");
+             switch (opcode) {
+@@ -347,6 +347,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+             case FrameOpcode::replay_drop: set_flag(frame.replay_drop); break;
+             case FrameOpcode::fullscreen: set_flag(frame.fullscreen); break;
+             case FrameOpcode::smooth_motion: set_flag(frame.smooth_motion); break;
++            case FrameOpcode::game_keyboard: set_flag(frame.game_keyboard); break;
+             case FrameOpcode::motion_begin:
+                 close_group();
+                 if (frame.motion.size() >= 2048) throw std::runtime_error("too many motion groups");
+diff --git a/src/adapters/sdl/platform.cpp b/src/adapters/sdl/platform.cpp
+index c2d500b..1d22c75 100644
+--- a/src/adapters/sdl/platform.cpp
++++ b/src/adapters/sdl/platform.cpp
+@@ -431,6 +431,14 @@ public:
+                     }
+                 }
+                 const int code = virtual_key(event.key.scancode);
++                // OpenLF2 iOS build: with the game keyboard on, every key goes to the game and is held a moment
++                // (the on-screen keyboard sends key down and up together), and the touch gamepad stays shown.
++                if (game_keyboard_ && code > 0) {
++                    input.key_downs.push_back(code);
++                    soft_held_[code] = SDL_GetTicks() + 160;
++                    if (types_text(code)) ++typed_keys;
++                    break;
++                }
+                 // On phones and tablets the text events carry the typed characters (with their case); the keys
+                 // behind them stay out of the input while a text field is open.
+                 if (code > 0 && text_from_events() && types_text(code)) break;
+@@ -486,6 +494,14 @@ public:
+             if (code > 0) input.keys[static_cast<std::size_t>(code)] = true;
+         }
+         if (enter_consumed_) input.keys[0x0d] = false; // the held Enter of an Alt+Enter
++        {
++            const auto now = SDL_GetTicks();
++            for (auto held = soft_held_.begin(); held != soft_held_.end();) {
++                if (held->second <= now) { held = soft_held_.erase(held); continue; }
++                if (held->first > 0 && held->first < 256) input.keys[static_cast<std::size_t>(held->first)] = true;
++                ++held;
++            }
++        }
+         if (text_from_events()) {
+             for (int code = 0; code < 256; ++code) {
+                 if (types_text(code)) input.keys[static_cast<std::size_t>(code)] = false;
+@@ -650,6 +666,13 @@ public:
+         return {static_cast<int>(std::floor(left)), static_cast<int>(std::floor(top)),
+                 static_cast<int>(std::ceil(right)), static_cast<int>(std::ceil(bottom))};
+     }
++    void set_game_keyboard(bool active) override {
++        if (active == game_keyboard_ || !window_) return;
++        game_keyboard_ = active;
++        soft_held_.clear();
++        if (active) SDL_StartTextInput(window_.get());
++        else if (!text_input_) SDL_StopTextInput(window_.get());
++    }
+     void set_text_input(bool active) override {
+         if (active == text_input_ || !window_) return;
+         text_input_ = active;
+@@ -1251,6 +1274,8 @@ private:
+     Uint64 rebuild_after_ = 0;
+     bool enter_consumed_ = false; // Enter belongs to an Alt+Enter until it is released
+     bool text_input_ = false;
++    bool game_keyboard_ = false;
++    std::map<int, Uint64> soft_held_; // OpenLF2 iOS build: keys of the game keyboard, held until the tick given
+     // Touch: the finger that acts as the pointer, its last position in viewport coordinates,
+     // and whether the pointer last moved by touch rather than by the mouse or a key.
+     std::optional<SDL_FingerID> finger_;
+diff --git a/src/app/application.cpp b/src/app/application.cpp
+index 0fe6ba7..bfcf703 100644
+--- a/src/app/application.cpp
++++ b/src/app/application.cpp
+@@ -1278,6 +1278,7 @@ Result<void> run(const Configuration& config) {
+             if (!applied) return std::unexpected(applied.error());
+         }
+         if (frame->text_input) platform->set_text_input(*frame->text_input);
++        if (frame->game_keyboard) platform->set_game_keyboard(*frame->game_keyboard);
+         if (frame->smooth_motion) smooth = *frame->smooth_motion;
+         accept_replay_drop = frame->replay_drop.value_or(false);
+         if (dropped_file) {

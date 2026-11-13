@@ -1,7 +1,12 @@
 """Make OpenLF2 find an LF2 installer shipped inside the iOS app bundle (full offline build)."""
-import sys, pathlib
+import sys, pathlib, subprocess
 
-src = pathlib.Path(sys.argv[1]) / "src/app/application.cpp"
+root = pathlib.Path(sys.argv[1])
+# KB button (system keyboard straight into the game) and MV button (one-tap special moves panel)
+patch = pathlib.Path(__file__).with_name("touch-moves-keyboard.patch")
+subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch.resolve())], cwd=root, check=True)
+print("applied", patch.name)
+src = root / "src/app/application.cpp"
 s = src.read_text()
 
 helper = r'''
