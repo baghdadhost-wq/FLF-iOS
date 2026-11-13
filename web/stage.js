@@ -335,7 +335,7 @@
   window.__flfStage.debug = function () {
     if (!S || !S.match) return null
     var m = S.match, h = humans(m)[0]
-    return { x: h && Math.round(h.ps.x), bound: S.stage.phases[Math.max(0, S.phase)].bound, cam: Math.round(m.background.camerax),
+    return { y: h && Math.round(h.ps.y), vy: h && Math.round(h.ps.vy * 10) / 10, fr: h && h.frame.N, st: h && h.state(), x: h && Math.round(h.ps.x), bound: S.stage.phases[Math.max(0, S.phase)].bound, cam: Math.round(m.background.camerax),
       onField: Object.keys(m.character).length, phase: S.phase, t: S.t, pending: S.pending.length, enemies: Object.keys(S.enemies).length,
       result: S.result, loading: S.loading, hp: Object.keys(m.character).map(function (k) { return m.character[k].team + ':' + Math.round(m.character[k].health.hp) }).join(',') }
   }

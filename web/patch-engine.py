@@ -125,4 +125,20 @@ patch('LF/match.js',
       "        try { window.__flfCurrentMatch.destroy() } catch (e) {} // FLF-iOS: close stray match\n      }\n"
       "      window.__flfAutoClose = false\n      window.__flfCurrentMatch = $",
       'FLF-iOS: close stray match', 1)
+# being caught: if the catcher is gone / dead / not catching any more, release instead of hanging forever
+patch('LF/character.js',
+      "          case 'TU':\n            if ($.frame.N === 135) {",
+      "          case 'TU':\n"
+      "            var CT = $.catching // FLF-iOS: release orphan catch\n"
+      "            if (!CT || CT.health.hp <= 0 || !$.match.character[CT.uid] || CT.catching !== $) {\n"
+      "              $.statemem.lostTU = ($.statemem.lostTU || 0) + 1\n"
+      "              if ($.statemem.lostTU > 3) {\n"
+      "                $.catching = null\n"
+      "                if ($.ps.vy === 0 && $.ps.y < 0) $.ps.vy = 1\n"
+      "                $.trans.frame($.ps.y < 0 ? 180 : 0, 25)\n"
+      "                break\n"
+      "              }\n"
+      "            } else { $.statemem.lostTU = 0 }\n"
+      "            if ($.frame.N === 135) {",
+      'FLF-iOS: release orphan catch', 1)
 print('engine patched')
