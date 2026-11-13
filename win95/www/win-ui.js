@@ -194,6 +194,7 @@
     button('Alt+F4', function () { combo([0x38, 0x3E]) })
     button('Ctrl+Alt+Del', function () { combo([0x1D, 0x38, 0x153]) })
     button('🖱️ نقر يمين', function () { click(2) })
+    button('♻ استعادة الأصل', function () { try { webkit.messageHandlers.lf2.postMessage({ cmd: 'factory' }) } catch (e) {} })
     button('✊ سحب', function (b) {
       dragLock = !dragLock; buttons[0] = dragLock; sendButtons(); b.classList.toggle('on', dragLock)
       say(dragLock ? 'الزر الأيسر مضغوط — حرّك إصبعك للسحب، واضغط «سحب» مرة أخرى للإفلات' : 'تم الإفلات', 2500)

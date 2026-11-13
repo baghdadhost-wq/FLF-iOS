@@ -45,8 +45,34 @@ enum GameFiles {
               (a[.size] as? NSNumber)?.int64Value == diskSize else { return nil }
         return u
     }
+    // the disk Windows really uses; every change Windows makes is written back into it
+    static var userDisk: URL { dir.appendingPathComponent("user.img") }
+    static var liveDisk: URL { bundledDisk != nil ? userDisk : disk }
+    static func ensureUserDisk() {
+        guard let b = bundledDisk else { return }
+        let fm = FileManager.default
+        let sz = (try? fm.attributesOfItem(atPath: userDisk.path)[.size] as? NSNumber)?.int64Value ?? 0
+        if sz == diskSize { return }
+        try? fm.removeItem(at: userDisk)
+        try? fm.copyItem(at: b, to: userDisk)     // APFS clone: instant, no extra space until Windows writes
+    }
+
+    // writes coming from the emulator, applied in order on one queue
+    static let writeQ = DispatchQueue(label: "disk-writes")
+    static var writeHandle: FileHandle?
+    static func write(offset: UInt64, data: Data) {
+        writeQ.async {
+            if writeHandle == nil { writeHandle = try? FileHandle(forWritingTo: liveDisk) }
+            guard let h = writeHandle, offset + UInt64(data.count) <= UInt64(diskSize) else { return }
+            h.seek(toFileOffset: offset)
+            h.write(data)
+        }
+    }
+    static func flush() { writeQ.sync { writeHandle?.synchronizeFile() } }
+    static func closeDisk() { writeQ.sync { try? writeHandle?.close(); writeHandle = nil } }
+
     static func ready() -> Bool {
-        if bundledDisk != nil { return true }
+        if bundledDisk != nil { ensureUserDisk(); return true }
         return sizeOK() && FileManager.default.fileExists(atPath: okMark.path)
     }
 
@@ -360,7 +386,7 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
         let file: URL
         if path.hasPrefix("disk/") {
             let name = String(path.dropFirst(5))
-            if name == "windows95.img", let b = GameFiles.bundledDisk { file = b }
+            if name == "windows95.img" { GameFiles.ensureUserDisk(); file = GameFiles.liveDisk }
             else { file = GameFiles.dir.appendingPathComponent(name) }
         } else {
             file = www.appendingPathComponent(path)
@@ -462,9 +488,29 @@ final class GameViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         if cmd == "prepare" { DispatchQueue.main.async { self.preparer.run() } }
         if cmd == "download" { DispatchQueue.main.async { self.preparer.startDownload() } }
         if cmd == "pick" { DispatchQueue.main.async { self.pickFiles() } }
+        if cmd == "w", let o = body["o"] as? NSNumber, let d = body["d"] as? String, let data = Data(base64Encoded: d) {
+            GameFiles.write(offset: o.uint64Value, data: data)
+        }
         if cmd == "reset" {
+            GameFiles.closeDisk()
             try? FileManager.default.removeItem(at: GameFiles.dir)
             DispatchQueue.main.async { self.preparer.run() }
+        }
+        if cmd == "factory" {
+            let a = UIAlertController(title: "استعادة Windows الأصلي؟",
+                                      message: "سيتم حذف كل التغييرات والملفات التي حفظتها داخل Windows والعودة إلى النسخة الأصلية.",
+                                      preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "إلغاء", style: .cancel))
+            a.addAction(UIAlertAction(title: "استعادة", style: .destructive) { _ in
+                GameFiles.closeDisk()
+                if GameFiles.bundledDisk != nil {
+                    try? FileManager.default.removeItem(at: GameFiles.userDisk)
+                } else {
+                    try? FileManager.default.removeItem(at: GameFiles.dir)
+                }
+                self.web.reload()
+            })
+            present(a, animated: true)
         }
     }
 
@@ -519,4 +565,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window = w
         return true
     }
+    func applicationDidEnterBackground(_ application: UIApplication) { GameFiles.flush() }
+    func applicationWillTerminate(_ application: UIApplication) { GameFiles.flush() }
 }

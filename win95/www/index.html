@@ -108,6 +108,53 @@ function fit() {
 setInterval(fit, 500);
 addEventListener("resize", fit);
 
+
+// Disk that keeps every change: reads come from the phone file, writes go back into it
+function PersistDisk(url, size) {
+  this.url = url; this.byteLength = size;
+  this.written = new Map();            // 256-byte blocks written this session
+  this.onload = this.onprogress = undefined;
+}
+PersistDisk.prototype.load = function () { this.onload && this.onload({}); };
+PersistDisk.prototype.get = function (start, len, cb) {
+  const first = start >> 8, n = Math.ceil(len / 256), w = this.written;
+  let all = true;
+  for (let i = 0; i < n; i++) if (!w.has(first + i)) { all = false; break; }
+  const overlay = (out) => {
+    for (let i = 0; i < n; i++) { const b = w.get(first + i); if (b) out.set(b.subarray(0, Math.min(256, len - i * 256)), i * 256); }
+    cb(out);
+  };
+  if (all) return overlay(new Uint8Array(len));
+  const x = new XMLHttpRequest();
+  x.open("GET", this.url, true);
+  x.responseType = "arraybuffer";
+  x.setRequestHeader("Range", "bytes=" + start + "-" + (start + len - 1));
+  x.onload = () => {
+    const out = new Uint8Array(len);
+    out.set(new Uint8Array(x.response).subarray(0, len));
+    overlay(out);
+  };
+  x.onerror = () => setTimeout(() => this.get(start, len, cb), 500);
+  x.send();
+};
+PersistDisk.prototype.set = function (start, data, cb) {
+  const first = start >> 8;
+  for (let i = 0; i * 256 < data.length; i++) {
+    const b = new Uint8Array(256);
+    b.set(data.subarray(i * 256, i * 256 + 256));
+    this.written.set(first + i, b);
+  }
+  try {
+    let s = "";
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+    window.webkit.messageHandlers.lf2.postMessage({ cmd: "w", o: start, d: btoa(s) });
+  } catch (e) {}
+  cb();
+};
+PersistDisk.prototype.get_buffer = function (cb) { cb(); };
+PersistDisk.prototype.get_state = function () { return [[...this.written]]; };
+PersistDisk.prototype.set_state = function (st) { this.written = new Map(st[0]); };
+
 window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
   lf2Progress("تشغيل Windows 95… (الإقلاع الأول يأخذ دقيقة تقريباً)", 1);
   const emulator = window.emulator = new V86({
@@ -117,7 +164,7 @@ window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
     screen_container: $("screen_container"),
     bios: { url: "seabios.bin" },
     vga_bios: { url: "vgabios.bin" },
-    hda: diskBuffer ? { buffer: diskBuffer, async: true } : { url: "disk/windows95.img", async: true, size: diskSize },
+    hda: diskBuffer ? { buffer: diskBuffer, async: true } : new PersistDisk("disk/windows95.img", diskSize),
     // full boot (no snapshot): the old snapshot has no CD drive, a fresh boot detects one on the 2nd IDE channel
     cdrom: undefined,
     autostart: true,
