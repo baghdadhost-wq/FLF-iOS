@@ -50,32 +50,77 @@ index e9f79a9..a13efc5 100644
  local function recognize(match, value, index)
      local spec = sequences[index]
 diff --git a/scripts/base/ui/flow.lua b/scripts/base/ui/flow.lua
-index 2419329..cd8ff35 100644
+index 2419329..a93aa14 100644
 --- a/scripts/base/ui/flow.lua
 +++ b/scripts/base/ui/flow.lua
-@@ -294,6 +294,10 @@ function flow.draw(state, context)
+@@ -34,7 +34,8 @@ end
+ -- the on-screen gamepad only has something to drive there ("full"); while a match is paused or
+ -- replaying only its pause button shows ("pause"); in a live match it shows too ("match").
+ local function gamepad_mode(state)
+-    if state.active == "launch" or state.active == "network" then return nil end
++    -- OpenLF2 iOS build: screens with text fields still get the ESC button alone.
++    if state.active == "launch" or state.active == "network" then return "esc" end
+     if state.active == "match" then
+         local match = state.match.match
+         -- Paused or replaying: only the pause button stays, to resume.
+@@ -294,6 +295,11 @@ function flow.draw(state, context)
          state.touch_gamepad.fast_on = speed.fast
          touch_gamepad.draw(state.touch_gamepad, context)
      end
 +    -- OpenLF2 iOS build: the KB button shows the system keyboard; its keys go straight to the game.
 +    if context.game_keyboard then
-+        context.game_keyboard(gamepad_mode(state) ~= nil and state.touch_gamepad.keyboard_on == true)
++        local kb_mode = gamepad_mode(state)
++        context.game_keyboard(kb_mode ~= nil and kb_mode ~= "esc" and state.touch_gamepad.keyboard_on == true)
 +    end
      local status = recording.status_text()
      if status then font.gdi(context, i18n.clip(status, 128), 3, 0x213, recording.status_color())
      elseif state.volume_text then font.gdi(context, state.volume_text, 3, 0x213, 0x00ff00) end
-@@ -381,6 +385,9 @@ function flow.update(state, raw, context)
+@@ -381,8 +387,13 @@ function flow.update(state, raw, context)
      local available = {}
      for _, chord in ipairs({"da", "dj", "daj"}) do available[chord] = control.chord_available(fighter, chord) end
      touch_gamepad.set_available(state.touch_gamepad, available)
+-    local touched, pause_held, fast_held = touch_gamepad.update(state.touch_gamepad,
 +    local move_available = {}
 +    for _, field in ipairs({"Fa", "Ua", "Da", "ja", "Fj", "Uj", "Dj"}) do move_available[field] = control.move_available(fighter, field) end
 +    touch_gamepad.set_moves(state.touch_gamepad, move_available, control.faces_left(fighter))
-     local touched, pause_held, fast_held = touch_gamepad.update(state.touch_gamepad,
++    local touched, pause_held, fast_held, esc_held = touch_gamepad.update(state.touch_gamepad,
          active_screen and gamepad_input or {touch_active = false, screen = input.screen}, mode)
++    -- OpenLF2 iOS build: the ESC button is the Escape key.
++    if esc_held then input.keys[virtual_keys.escape] = true end
      -- The pause button is F1; the match toggles on its press.
+     if pause_held and state.active == "match" and not input.functions:find("1", 1, true) then
+         input.functions = input.functions .. "1"
+diff --git a/scripts/base/ui/network.lua b/scripts/base/ui/network.lua
+index 902092b..9f8b37b 100644
+--- a/scripts/base/ui/network.lua
++++ b/scripts/base/ui/network.lua
+@@ -21,7 +21,8 @@ function screen.create(options)
+     return {session = transport.create(options), page = "choice", address = "", previous_keys = {},
+         nav = navigation.create(), keyboard = false,
+         background = (options.menu_seed or 0) % 13 + 1, pointer_x = 0, pointer_y = 0,
+-        bind = options.network_bind or "0.0.0.0", started = engine.network_time()}
++        bind = options.network_bind or "0.0.0.0", started = engine.network_time(),
++        ip = engine.local_ip and engine.local_ip() or nil, ip_checked = engine.network_time()}
+ end
+ function screen.begin(state, host, address)
+     state.message = nil
+@@ -107,7 +108,13 @@ function screen.draw(state, context)
+     sprite(14, 0xfd, 0x14f)
+     -- The original writes " Your IP Address: <address>" here on an opaque box, which also hides
+     -- the art's own label; OpenLF2 has no address to show, so it shows its TCP port instead.
+-    font.gdi(context, " " .. i18n.tr("Your TCP port: %s", state.session.port), 0x121, 0xfb, 0xffffff, 0x001e50)
++    -- OpenLF2 iOS build: the device's own address again, refreshed every 3 seconds (Wi-Fi can change).
++    if engine.local_ip and engine.network_time() - (state.ip_checked or 0) > 3000 then
++        state.ip, state.ip_checked = engine.local_ip(), engine.network_time()
++    end
++    local label = state.ip and ("Your IP: " .. state.ip .. "   port: " .. tostring(state.session.port))
++        or i18n.tr("Your TCP port: %s", state.session.port) .. "  (no Wi-Fi)"
++    font.gdi(context, " " .. label, 0x121, 0xfb, 0xffffff, 0x001e50)
+     if state.page == "waiting" then
+         sprite(state.session.host and 10 or 11, 0xec, 0x122)
+         sprite(12, 0x142, 0x169)
 diff --git a/scripts/base/ui/touch_gamepad.lua b/scripts/base/ui/touch_gamepad.lua
-index 78864fc..2b0d694 100644
+index 78864fc..a62334a 100644
 --- a/scripts/base/ui/touch_gamepad.lua
 +++ b/scripts/base/ui/touch_gamepad.lua
 @@ -57,6 +57,30 @@ local function build_buttons(layout, screen)
@@ -109,17 +154,18 @@ index 78864fc..2b0d694 100644
  local outline = {18, 18, 22}
  local disabled_fill = {34, 34, 38}
  
-@@ -83,6 +107,9 @@ local function fit(state, screen)
+@@ -83,6 +107,10 @@ local function fit(state, screen)
      state.fast = {x = screen.left + math.floor(fast.left), y = screen.top + math.floor(fast.top),
          radius = math.floor(fast.radius)}
      state.buttons = build_buttons(state.layout, screen)
 +    state.move_buttons = build_moves(screen)
 +    state.keyboard_toggle = {x = screen.left + 76, y = screen.top + 30, radius = 18, label = "KB"}
 +    state.moves_toggle = {x = screen.left + 124, y = screen.top + 30, radius = 18, label = "MV"}
++    state.esc = {x = screen.left + 176, y = screen.top + 30, radius = 22, label = "ESC"}
      if not state.finger then
          state.base_x, state.base_y = state.stick.default_x, state.stick.default_y
          state.knob_x, state.knob_y = state.base_x, state.base_y
-@@ -100,6 +127,17 @@ local function inside_zone(zone, x, y) return x >= zone.left and x <= zone.right
+@@ -100,6 +128,17 @@ local function inside_zone(zone, x, y) return x >= zone.left and x <= zone.right
  
  -- Which chord buttons ("da", "dj", "daj") are enabled; the others cannot be pressed.
  function gamepad.set_available(state, available) state.available = available end
@@ -137,9 +183,12 @@ index 78864fc..2b0d694 100644
  
  -- state: from `create`. input: the frame's input; pass touch_active=false to release the held
  -- finger and hide (paused/replaying/other screens).
-@@ -112,8 +150,10 @@ local function target_at(state, touch, mode)
+@@ -111,9 +150,13 @@ local function target_at(state, touch, mode)
+         local gap = math.sqrt((touch.x - target.x) ^ 2 + (touch.y - target.y) ^ 2) - target.radius
          if gap <= state.tolerance and (not best_gap or gap < best_gap) then best, best_gap = target, gap end
      end
++    consider(state.esc)
++    if mode == "esc" then return best end
      if mode ~= "full" then consider(state.pause); consider(state.fast) end
 +    consider(state.keyboard_toggle)
      if mode ~= "pause" then
@@ -149,19 +198,29 @@ index 78864fc..2b0d694 100644
      end
      return best
  end
-@@ -129,7 +169,7 @@ function gamepad.update(state, input, mode)
+@@ -129,10 +172,10 @@ function gamepad.update(state, input, mode)
      local screen = state.screen
      state.visible = input.touch_active == true
      if not state.visible then
 -        state.finger, state.held = nil, {}
-+        state.finger, state.held, state.macro = nil, {}, nil
++        state.finger, state.held, state.macro, state.esc_held = nil, {}, nil, false
          state.base_x, state.base_y = stick.default_x, stick.default_y
          state.knob_x, state.knob_y = stick.default_x, stick.default_y
-         return "", false, false
-@@ -140,6 +180,11 @@ function gamepad.update(state, input, mode)
+-        return "", false, false
++        return "", false, false, false
+     end
+     local touches = input.touches or {}
+     local pressed = {}
+@@ -140,6 +183,17 @@ function gamepad.update(state, input, mode)
          local target = target_at(state, touch, mode)
          if target then pressed[target] = true end
      end
++    local esc_held = pressed[state.esc] == true
++    state.esc_held = esc_held
++    if mode == "esc" then
++        state.mode, state.finger, state.held, state.macro = mode, nil, {}, nil
++        return "", false, false, esc_held
++    end
 +    -- KB / MV toggles flip on a new press.
 +    local keyboard_held, moves_held = pressed[state.keyboard_toggle] == true, pressed[state.moves_toggle] == true
 +    if keyboard_held and not state.keyboard_was_held then state.keyboard_on = not state.keyboard_on end
@@ -170,7 +229,16 @@ index 78864fc..2b0d694 100644
      local pause_held = pressed[state.pause] == true
      local fast_held = pressed[state.fast] == true
      state.pause_held, state.fast_held, state.mode = pause_held, fast_held, mode
-@@ -206,12 +251,29 @@ function gamepad.update(state, input, mode)
+@@ -148,7 +202,7 @@ function gamepad.update(state, input, mode)
+         state.base_x, state.base_y = stick.default_x, stick.default_y
+         state.knob_x, state.knob_y = stick.default_x, stick.default_y
+         state.run_armed, state.run_pulse = nil, nil
+-        return "", pause_held, fast_held
++        return "", pause_held, fast_held, esc_held
+     end
+     local by_id = {}
+     for _, touch in ipairs(touches) do by_id[touch.id] = touch end
+@@ -206,18 +260,35 @@ function gamepad.update(state, input, mode)
  
      -- Any finger on a button holds it; multiple fingers can hold multiple buttons plus the stick.
      -- A disabled chord still catches fingers near it but does nothing.
@@ -202,7 +270,30 @@ index 78864fc..2b0d694 100644
      state.held = held
      local letters = {}
      for _, letter in ipairs({"u", "d", "l", "r", "c", "b", "f"}) do
-@@ -304,6 +366,15 @@ function gamepad.draw(state, context)
+         if held[letter] then letters[#letters + 1] = letter end
+     end
+-    return table.concat(letters), pause_held, fast_held
++    return table.concat(letters), pause_held, fast_held, esc_held
+ end
+ 
+ -- A circle approximated by horizontal strips (no rounded primitive exists),
+@@ -300,10 +371,30 @@ function gamepad.draw(state, context)
+         context.fill(x, y, width, height, red, green, blue, 168)
+     end}
+     context.overlay(true)
+-    if state.mode ~= "full" then
++    do
++        local esc = state.esc
++        local color = state.esc_held and {170, 80, 65} or {90, 45, 40}
++        disc(button_context, esc.x, esc.y, esc.radius, outline[1], outline[2], outline[3])
++        disc(button_context, esc.x, esc.y, esc.radius - 3, color[1], color[2], color[3])
++        font.draw(context, esc.label, esc.x, esc.y - 8, nil, nil, "center")
++    end
++    if state.mode == "esc" then
++        context.overlay(false)
++        return
++    end
++    if state.mode ~= "full" and state.mode ~= "esc" then
          draw_pause(state, button_context)
          draw_fast(state, button_context)
      end
@@ -218,7 +309,7 @@ index 78864fc..2b0d694 100644
      if state.mode == "pause" then
          context.overlay(false)
          return
-@@ -322,9 +393,12 @@ function gamepad.draw(state, context)
+@@ -322,9 +413,12 @@ function gamepad.draw(state, context)
          disc(stick_context, state.knob_x, state.knob_y, stick.knob, outline[1], outline[2], outline[3])
          disc(stick_context, state.knob_x, state.knob_y, stick.knob_inner, knob_color[1], knob_color[2], knob_color[3])
      end
@@ -235,10 +326,27 @@ index 78864fc..2b0d694 100644
          disc(button_context, button.x, button.y, button.radius - 6, color[1], color[2], color[3])
          font.draw(context, button.label, button.x, button.y - 8, nil, disabled and 0x606060 or nil, "center")
 diff --git a/scripts/runtime/bootstrap.lua b/scripts/runtime/bootstrap.lua
-index 7819dc1..47f3db4 100644
+index 7819dc1..a72605a 100644
 --- a/scripts/runtime/bootstrap.lua
 +++ b/scripts/runtime/bootstrap.lua
-@@ -109,7 +109,7 @@ local FrameOpcode = {
+@@ -15,6 +15,7 @@ local random_state, set_random_state = openlf2_random_state, openlf2_set_random_
+ local reset_random_sequence = openlf2_reset_random_sequence
+ local save_recording, take_recording = openlf2_save_recording, openlf2_take_recording
+ local local_time = openlf2_local_time
++local local_ip = openlf2_local_ip
+ local build_label = openlf2_build_label
+ local new_table = jit and require("table.new")
+ local function new_array(capacity)
+@@ -48,7 +49,7 @@ local function evaluate(declaration, previous)
+             read_settings = read_settings, write_settings = write_settings,
+             random_state = random_state, set_random_state = set_random_state,
+             reset_random_sequence = reset_random_sequence, save_recording = save_recording,
+-            take_recording = take_recording, local_time = local_time, build_label = build_label,
++            take_recording = take_recording, local_time = local_time, local_ip = local_ip, build_label = build_label,
+             network = network, network_time = network_time},
+     }
+     environment.math.random = nil
+@@ -109,7 +110,7 @@ local FrameOpcode = {
      clip = 6, sound = 7, rumble = 8, music = 9, speed = 10,
      render_filter = 11, text_input = 12, replay_drop = 13, fullscreen = 14, action = 15, text = 16, file_dialog = 17, world_sprite = 18,
  
@@ -247,7 +355,7 @@ index 7819dc1..47f3db4 100644
  }
  local RumbleTarget = {gamepad = 0, phone = 1}
  local MusicKind = {play = 0, stop = 1, resume = 2, volume = 3}
-@@ -177,6 +177,7 @@ local function render(input)
+@@ -177,6 +178,7 @@ local function render(input)
          command(FrameOpcode.render_filter, RenderFilter[filter] or INVALID_ENUM)
      end
      function context.text_input(active) command(FrameOpcode.text_input, active) end
@@ -256,10 +364,25 @@ index 7819dc1..47f3db4 100644
      function context.fullscreen(active) command(FrameOpcode.fullscreen, active) end
      -- Smooth motion (OpenLF2 extension): the host may show pictures between two frames, moving every motion group.
 diff --git a/src/adapters/luajit/runtime.cpp b/src/adapters/luajit/runtime.cpp
-index 0a3b77f..3a0b1e5 100644
+index 0a3b77f..78452e0 100644
 --- a/src/adapters/luajit/runtime.cpp
 +++ b/src/adapters/luajit/runtime.cpp
-@@ -187,7 +187,7 @@ int create_bridge_slot(lua_State* state) {
+@@ -19,6 +19,14 @@
+ #include <stdexcept>
+ #include <utility>
+ extern "C" {
++#include <string>
++#if (defined(__APPLE__) || defined(__linux__) || defined(__ANDROID__)) && !defined(__EMSCRIPTEN__) && !defined(__SWITCH__)
++#include <arpa/inet.h>
++#include <ifaddrs.h>
++#include <net/if.h>
++#include <netinet/in.h>
++#define OPENLF2_HAS_IFADDRS 1
++#endif
+ #include <lua.h>
+ #include <lauxlib.h>
+ #include <lualib.h>
+@@ -187,7 +195,7 @@ int create_bridge_slot(lua_State* state) {
  enum class FrameOpcode {
      viewport = 1, sprite, fill, overlay, render_area, clip, sound, rumble,
      music, speed, render_filter, text_input, replay_drop, fullscreen, action, text, file_dialog, world_sprite,
@@ -268,7 +391,7 @@ index 0a3b77f..3a0b1e5 100644
  };
  class FrameReader {
  public:
-@@ -265,7 +265,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+@@ -265,7 +273,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
              group.reset();
          };
          while (reader.remaining()) {
@@ -277,7 +400,7 @@ index 0a3b77f..3a0b1e5 100644
              const bool grouping = opcode == FrameOpcode::motion_begin || opcode == FrameOpcode::motion_end;
              if (!grouping && ++commands > 4096) throw std::runtime_error("too many frame commands");
              switch (opcode) {
-@@ -347,6 +347,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
+@@ -347,6 +355,7 @@ Result<ScriptFrame> decode_frame(lua_State* state, int table, int count) {
              case FrameOpcode::replay_drop: set_flag(frame.replay_drop); break;
              case FrameOpcode::fullscreen: set_flag(frame.fullscreen); break;
              case FrameOpcode::smooth_motion: set_flag(frame.smooth_motion); break;
@@ -285,6 +408,51 @@ index 0a3b77f..3a0b1e5 100644
              case FrameOpcode::motion_begin:
                  close_group();
                  if (frame.motion.size() >= 2048) throw std::runtime_error("too many motion groups");
+@@ -593,6 +602,34 @@ int local_time(lua_State* state) {
+     lua_pushlstring(state, bridge->pending_text.data(), bridge->pending_text.size());
+     return 1;
+ }
++// OpenLF2 iOS build: this device's local IPv4 address for the network game screen (Wi-Fi first, then a
++// hotspot bridge, then anything else that is up), or nil.
++int local_ip(lua_State* state) {
++    std::string best;
++#ifdef OPENLF2_HAS_IFADDRS
++    ifaddrs* list = nullptr;
++    if (getifaddrs(&list) == 0) {
++        int best_rank = -1;
++        for (auto* entry = list; entry != nullptr; entry = entry->ifa_next) {
++            if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_INET) continue;
++            if ((entry->ifa_flags & IFF_UP) == 0 || (entry->ifa_flags & IFF_LOOPBACK) != 0) continue;
++            char text[INET_ADDRSTRLEN] = {};
++            const auto* address = reinterpret_cast<const sockaddr_in*>(entry->ifa_addr);
++            if (inet_ntop(AF_INET, &address->sin_addr, text, sizeof(text)) == nullptr) continue;
++            const std::string name = entry->ifa_name != nullptr ? entry->ifa_name : "";
++            int rank = 1;
++            if (name.rfind("en", 0) == 0 || name.rfind("wlan", 0) == 0 || name.rfind("eth", 0) == 0) rank = 3;
++            else if (name.rfind("bridge", 0) == 0 || name.rfind("ap", 0) == 0 || name.rfind("swlan", 0) == 0) rank = 2;
++            if (std::strncmp(text, "169.254.", 8) == 0) rank = 0;
++            if (rank > best_rank) { best_rank = rank; best = text; }
++        }
++        freeifaddrs(list);
++    }
++#endif
++    if (best.empty()) lua_pushnil(state);
++    else lua_pushlstring(state, best.data(), best.size());
++    return 1;
++}
+ // Returns the configuration table, or nil and a message when none is stored or it is unreadable.
+ int read_settings(lua_State* state) {
+     auto* bridge = resource_bridge(state);
+@@ -712,7 +749,8 @@ int open_libraries(lua_State* state) {
+         {"openlf2_network", network_operation}, {"openlf2_network_time", network_time},
+         {"openlf2_random_state", random_state}, {"openlf2_set_random_state", set_random_state},
+         {"openlf2_reset_random_sequence", reset_random_sequence}, {"openlf2_save_recording", save_recording},
+-        {"openlf2_take_recording", take_recording}, {"openlf2_local_time", local_time}};
++        {"openlf2_take_recording", take_recording}, {"openlf2_local_time", local_time},
++        {"openlf2_local_ip", local_ip}};
+     for (const auto& [name, function] : recording_functions) {
+         lua_pushvalue(state, -1);
+         lua_pushcclosure(state, function, 1);
 diff --git a/src/adapters/sdl/platform.cpp b/src/adapters/sdl/platform.cpp
 index c2d500b..1d22c75 100644
 --- a/src/adapters/sdl/platform.cpp
