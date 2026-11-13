@@ -1,0 +1,51 @@
+name: Build Win95 IPA
+
+on:
+  push:
+    branches: [main]
+    paths: ['win95/**', '.github/workflows/build-win95.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile app
+        run: |
+          APP=Payload/Win95.app
+          mkdir -p "$APP"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos swiftc -parse-as-library -O \
+            -target arm64-apple-ios15.0 -sdk "$SDK" \
+            -framework UIKit -framework WebKit -framework AVFoundation \
+            win95/App/main.swift -o "$APP/Win95" 2>&1 | tee swiftc.log
+          if [ ! -f "$APP/Win95" ]; then
+            grep -E "error:|Undefined|ld:" swiftc.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
+          cp win95/App/Info.plist "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" "$APP/Info.plist"
+          cp win95/App/AppIcon60x60@2x.png win95/App/AppIcon60x60@3x.png "$APP/"
+          cp -R win95/www "$APP/www"
+          plutil -lint "$APP/Info.plist"
+          file "$APP/Win95"
+          zip -qry Win95.ipa Payload
+          ls -lh Win95.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Win95.ipa
+          path: Win95.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="win95-build-${{ github.run_number }}"
+          gh release create "$TAG" Win95.ipa --title "Windows 95 (v86) $TAG" \
+            --notes "Windows 95 in v86 for LiveContainer: CD-ROM (ISO) and phone file transfer." --latest=false

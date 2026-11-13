@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Windows 95</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #screen_container { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; line-height: 0; }
+  #screen_container > div { white-space: pre; font: 14px/1.1 monospace; color: #cfd6e4; }
+  #screen_container canvas { display: block; image-rendering: pixelated; }
+  #loader { position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; background: #0a0d14; color: #eaeef7; font-family: -apple-system, sans-serif;
+    text-align: center; padding: 20px; direction: rtl }
+  #loader.hidden { display: none }
+  .bar { width: min(420px, 80vw); height: 10px; border-radius: 9px; background: #1b2435; overflow: hidden; border: 1px solid #273349 }
+  .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ff5a3c, #ff8a3c); transition: width .2s }
+  #st { font-size: 15px } #sub { font-size: 12px; color: #93a0b8 }
+  .src { padding: 12px 20px; border-radius: 12px; border: 1px solid #ff8a3c; background: #1b2435; color: #fff; font-size: 16px; min-width: 300px }
+  #retry { display: none; padding: 10px 18px; border-radius: 10px; border: 0; background: #ff5a3c; color: #fff; font-size: 15px }
+</style>
+</head>
+<body>
+<div id="screen_container"><div></div><canvas></canvas></div>
+<div id="loader">
+  <div style="font-size:26px;font-weight:800">Windows 95</div>
+  <div id="st">جارِ التحضير…</div>
+  <div class="bar"><div id="bar"></div></div>
+  <div id="sub"></div>
+  <div id="choose" style="display:none;flex-direction:column;gap:10px;align-items:center">
+    <button class="src" id="src_net">⬇ تحميل اللعبة من الإنترنت (~95 ميغا)</button>
+    <button class="src" id="src_file">📁 اختيار ملفات اللعبة من «الملفات»</button>
+    <div style="font-size:12px;color:#93a0b8;max-width:520px;line-height:1.6">
+      للاختيار من الملفات حدّد معاً: <span dir="ltr">windows95.img.part1.gz</span> و<span dir="ltr">part2.gz</span> و<span dir="ltr">part3.gz</span>
+      و<span dir="ltr">win95-lf2-default.bin.zst</span> (من مستودع r-lf2-web)، أو <span dir="ltr">windows95.img</span> غير مضغوط مع ملف <span dir="ltr">.zst</span>.
+    </div>
+  </div>
+  <button id="retry">إعادة المحاولة</button>
+</div>
+<script src="libv86.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lf2;
+
+window.lf2Progress = (text, frac) => {
+  $("st").textContent = text;
+  if (frac != null) $("bar").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
+};
+window.lf2Error = (msg) => {
+  if (msg.indexOf("unpack:") === 0 && !window.__jsUnpackTried) { window.__jsUnpackTried = true; jsUnpack(); return; }
+  $("st").textContent = "تعذّر التحميل: " + msg.replace("unpack:", "");
+  $("retry").style.display = "block";
+};
+
+// fallback: unpack the downloaded .gz parts inside the web view and keep the disk in memory
+async function jsUnpack() {
+  try {
+    lf2Progress("جارِ فك الضغط (طريقة بديلة)…", 0.9);
+    const parts = ["windows95.img.part1.gz", "windows95.img.part2.gz", "windows95.img.part3.gz"];
+    const blobs = [];
+    for (const p of parts) {
+      const r = await fetch("disk/" + p + ".dl");
+      if (!r.ok) throw new Error(p + " " + r.status);
+      blobs.push(await r.blob());
+    }
+    const gz = new Blob(blobs);
+    const img = await new Response(gz.stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+    window.lf2Ready(img.size, new File([img], "windows95.img"));
+  } catch (e) {
+    window.lf2Error("فشل فك الضغط: " + e.message);
+  }
+}
+$("retry").onclick = () => { $("retry").style.display = "none"; prepare(); };
+window.lf2NeedSource = (msg) => {
+  $("choose").style.display = "flex";
+  $("retry").style.display = "none";
+  $("st").textContent = msg ? msg : "اختر طريقة الحصول على ملفات اللعبة (مرة واحدة فقط):";
+  $("bar").style.width = "0";
+};
+$("src_net").onclick = () => { $("choose").style.display = "none"; lf2Progress("جارِ بدء التحميل…", 0); bridge && bridge.postMessage({ cmd: "download" }); };
+$("src_file").onclick = () => { $("choose").style.display = "none"; lf2Progress("اختر الملفات…", 0); bridge && bridge.postMessage({ cmd: "pick" }); };
+
+function prepare() {
+  lf2Progress("جارِ التحضير…", 0);
+  if (bridge) bridge.postMessage({ cmd: "prepare" });
+  else fetch("disk/windows95.img", { method: "HEAD" })
+    .then((r) => lf2Ready(+r.headers.get("content-length")))
+    .catch((e) => lf2Error(e.message));
+}
+
+// fit the emulator screen to the phone
+function fit() {
+  const c = document.querySelector("#screen_container canvas");
+  const box = $("screen_container");
+  let w = c && c.style.display !== "none" ? c.width : box.offsetWidth;
+  let h = c && c.style.display !== "none" ? c.height : box.offsetHeight;
+  if (!w || !h) return;
+  const s = Math.min(innerWidth / w, innerHeight / h);
+  box.style.transform = `scale(${s}) translate(-50%, -50%)`;
+}
+setInterval(fit, 500);
+addEventListener("resize", fit);
+
+window.lf2Ready = (diskSize, diskBuffer, stateUrl) => {
+  lf2Progress("تشغيل Windows 95… (الإقلاع الأول يأخذ دقيقة تقريباً)", 1);
+  const emulator = window.emulator = new V86({
+    wasm_path: "v86.wasm",
+    memory_size: 64 * 1024 * 1024,      // must match the saved state
+    vga_memory_size: 16 * 1024 * 1024,
+    screen_container: $("screen_container"),
+    bios: { url: "seabios.bin" },
+    vga_bios: { url: "vgabios.bin" },
+    hda: diskBuffer ? { buffer: diskBuffer, async: true } : { url: "disk/windows95.img", async: true, size: diskSize },
+    // full boot (no snapshot): the old snapshot has no CD drive, a fresh boot detects one on the 2nd IDE channel
+    cdrom: undefined,
+    autostart: true,
+    disable_keyboard: false,             // a Bluetooth keyboard also works; on-screen keyboard sends scancodes
+    disable_mouse: true,                 // mouse comes from the touch trackpad (win-ui.js)
+  });
+  emulator.add_listener("emulator-ready", () => {
+    setTimeout(function () { $("loader").classList.add("hidden") }, 1500);
+    fit();
+    if (window.winReady) window.winReady(emulator);
+  });
+  emulator.add_listener("screen-set-size", fit);
+};
+
+prepare();
+</script>
+<script src="isobuild.js"></script>
+<script src="win-ui.js"></script>
+</body>
+</html>
