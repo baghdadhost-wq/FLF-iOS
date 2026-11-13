@@ -1,0 +1,110 @@
+name: Build OpenLF2 (no Windows, all devices)
+
+# OpenLF2 = open-source re-implementation of Little Fighter 2 v2.0a (C++/SDL3, no Windows, no emulator).
+# The iOS IPA is built from source with the original LF2 v2.0a game data shipped inside it, so it
+# works offline from the first launch. The release also carries the official Android APKs.
+#
+# Built in stages: compiled dependencies (Conan) are cached even when a run fails or times out,
+# so the next run continues from where the last one stopped.
+
+on:
+  push:
+    branches: [main]
+    paths: ['openlf2/**', '.github/workflows/build-openlf2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  OPENLF2_REF: v1.2.0
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage 1 — get OpenLF2 source and patch it
+        run: |
+          git clone --depth 1 --branch "$OPENLF2_REF" https://github.com/OpenLF2/OpenLF2.git src
+          python3 openlf2/patch.py src
+
+      - name: Stage 2 — get the original LF2 v2.0a game data
+        run: |
+          set +e
+          mkdir -p game
+          for url in \
+            "https://lf2.net/LF2_v2.0a.exe" \
+            "https://web.archive.org/web/20260921121026id_/https://lf2.net/LF2_v2.0a.exe" \
+            "https://archive.org/download/little-fighter-2_202404/Little%20Fighter%202.rar/Little%20Fighter%202%2FLF2Setup.exe"; do
+            echo "trying $url"
+            curl -fL --retry 3 -o game/installer.exe "$url" || continue
+            size=$(stat -f%z game/installer.exe)
+            echo "size $size"
+            if [ "$size" = "29586263" ]; then mv game/installer.exe game/LF2_v2.0a.exe; break; fi
+            if [ "$size" = "31904750" ]; then mv game/installer.exe game/lf2_v20a_Setup.exe; break; fi
+            rm -f game/installer.exe
+          done
+          ls -l game
+          ls game/*.exe >/dev/null 2>&1 || { echo "::error::could not download the LF2 v2.0a installer"; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Conan
+        run: python3 -m pip install 'conan==2.32.0'
+
+      - name: Restore compiled dependencies (from earlier stages)
+        id: conan-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: src/build/apple/ios-device-arm64/conan-cache.tgz
+          key: openlf2-conan-ios-${{ env.OPENLF2_REF }}-${{ github.run_id }}
+          restore-keys: |
+            openlf2-conan-ios-${{ env.OPENLF2_REF }}-
+
+      - name: Stage 3 — compile (dependencies + game)
+        working-directory: src
+        run: bash dist/build-apple.sh ios-device-arm64
+
+      - name: Save compiled dependencies (even if the build failed)
+        if: ${{ always() && hashFiles('src/build/apple/ios-device-arm64/conan-cache.tgz') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: src/build/apple/ios-device-arm64/conan-cache.tgz
+          key: openlf2-conan-ios-${{ env.OPENLF2_REF }}-${{ github.run_id }}
+
+      - name: Stage 4 — put the game data inside the IPA
+        run: |
+          IPA=src/out/OpenLF2-iOS-arm64-unsigned.ipa
+          ls -lh "$IPA"
+          rm -rf pkg && mkdir pkg && cd pkg
+          unzip -q "../$IPA"
+          APP=$(ls -d Payload/*.app | head -1)
+          cp ../game/*.exe "$APP/"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName LF2" "$APP/Info.plist" || true
+          codesign --force --sign - "$APP" || true
+          zip -qry -9 ../LF2-OpenLF2.ipa Payload
+          cd .. && ls -lh LF2-OpenLF2.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LF2-OpenLF2-ipa
+          path: LF2-OpenLF2.ipa
+
+      - name: Publish release (iOS + Android)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$OPENLF2_REF" -R OpenLF2/OpenLF2 \
+            -p 'OpenLF2-Android-api21-arm64-v8a.apk' -p 'OpenLF2-Android-api21-armeabi-v7a.apk' || true
+          TAG="openlf2-build-${{ github.run_number }}"
+          shopt -s nullglob
+          FILES=(LF2-OpenLF2.ipa OpenLF2-Android-*.apk)
+          gh release create "$TAG" "${FILES[@]}" --title "LF2 (OpenLF2, no Windows) $TAG" \
+            --notes "Little Fighter 2 v2.0a re-implemented (OpenLF2 $OPENLF2_REF), no Windows and no emulator.
+          - LF2-OpenLF2.ipa: iPhone / iPad (LiveContainer or any sideloader). Game data is inside, works offline.
+          - OpenLF2-Android-*.apk: Android (official build; downloads the game data once on first launch)." --latest=false

@@ -3,7 +3,7 @@ name: Build F.LF IPA
 on:
   push:
     branches: [main]
-    paths-ignore: ['lf2/**', '.github/workflows/build-lf2.yml']
+    paths-ignore: ['lf2/**', '.github/workflows/build-lf2.yml', 'openlf2/**', '.github/workflows/build-openlf2.yml']
   workflow_dispatch:
 
 permissions:
