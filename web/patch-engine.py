@@ -141,12 +141,14 @@ patch('LF/character.js',
       "            } else { $.statemem.lostTU = 0 }\n"
       "            if ($.frame.N === 135) {",
       'FLF-iOS: release orphan catch', 1)
-# safety net: a fighter frozen in the air (same frame, same height) for 2 seconds is made to fall
+# safety net for frozen fighters:
+#  - in the air: height unchanged for 2s (whatever the frame) -> fall
+#  - on the ground: stuck in the same short frame for 3s -> back to standing
 patch('LF/livingobject.js',
       "      $.effect.timein--\n      if ($.effect.timein < 0 && $.effect.stuck) {\n        ; // stuck!\n      } else {\n        $.state_update('transit')\n      }",
       "      $.effect.timein--\n      if ($.effect.timein < 0 && $.effect.stuck) {\n        ; // stuck!\n      } else {\n        $.state_update('transit')\n      }\n"
-      "      if ($.type === 'character' && $.health && $.health.hp > 0) { // FLF-iOS: air freeze guard\n"
-      "        if ($.ps.y < 0 && $.frame.N === $._hangN && Math.abs($.ps.y - $._hangY) < 0.5) {\n"
+      "      if ($.type === 'character' && $.health && $.health.hp > 0 && !($.match && $.match.time && $.match.time.paused)) { // FLF-iOS: freeze guard\n"
+      "        if ($.ps.y < 0 && $._hangY !== undefined && Math.abs($.ps.y - $._hangY) < 0.5) {\n"
       "          if (++$._hangT > 60) {\n"
       "            $._hangT = 0\n"
       "            $.effect.stuck = false; $.effect.timein = 0; $.effect.timeout = 0\n"
@@ -154,7 +156,15 @@ patch('LF/livingobject.js',
       "            $.ps.vy = 1\n"
       "            $.trans.frame($.data.frame[212] ? 212 : 0, 30)\n"
       "          }\n"
-      "        } else { $._hangT = 0; $._hangN = $.frame.N; $._hangY = $.ps.y }\n"
+      "        } else { $._hangT = 0; $._hangY = $.ps.y }\n"
+      "        var FD = $.data.frame[$.frame.N], ST = $.state()\n"
+      "        if ($.ps.y === 0 && $.frame.N === $._sameN && FD && FD.wait < 40 && ST !== 13 && ST !== 14 && ST !== 10 && ST !== 9 && ST !== 0 && ST !== 1 && ST !== 7) {\n"
+      "          if (++$._sameT > 90) {\n"
+      "            $._sameT = 0\n"
+      "            $.effect.stuck = false; $.effect.timein = 0; $.effect.timeout = 0\n"
+      "            $.trans.frame(999, 30)\n"
+      "          }\n"
+      "        } else { $._sameT = 0; $._sameN = $.frame.N }\n"
       "      }",
-      'FLF-iOS: air freeze guard', 1)
+      'FLF-iOS: freeze guard', 1)
 print('engine patched')
